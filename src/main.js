@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { detectQuality, damp } from './util.js';
+import { detectQuality } from './util.js';
+import { orientCompass } from './compass.js';
 import { createAsphaltTextures } from './materials.js';
 import { createCircuit } from './circuit.js';
 import { createLighting } from './lighting.js';
@@ -66,12 +67,12 @@ let beepState = -1;
 const smoke = createSmoke(scene);
 const minimap = setupMinimap(circuit);
 
-let cameraRoll = 0;
 const camPos = new THREE.Vector3(40, 8, -20);
 const camLook = new THREE.Vector3();
 const desiredPos = new THREE.Vector3();
 const desiredLook = new THREE.Vector3();
 const forward = new THREE.Vector3();
+const roof = new THREE.Vector3();
 let titleAngle = 0.4;
 
 bindInput();
@@ -113,7 +114,7 @@ function step(dt) {
       syncCar(models[index], car, sample, dt, drive);
       if (index === 0) smoke.update(dt, car, sample, input);
     });
-    updateChaseCamera(dt, input);
+    updateChaseCamera(dt);
     updateHud();
   }
   if (race.phase === 'title') {
@@ -206,27 +207,35 @@ function updateTitleCamera(dt) {
   dampFov(52, dt);
 }
 
-function updateChaseCamera(dt, input) {
+function updateChaseCamera(dt) {
   const player = race.cars[0];
   const sample = circuit.query(player.x, player.z);
-  forward.set(Math.sin(player.heading), 0, Math.cos(player.heading));
+  const frame = player.compass || orientCompass(player.heading, sample.up);
+  forward.set(frame.forward.x, frame.forward.y, frame.forward.z);
   const origin = models[0].root.position;
+  roof.set(frame.up.x, frame.up.y, frame.up.z);
   if (cameraMode === 'bumper') {
-    desiredPos.copy(origin).addScaledVector(forward, 1.15).addScaledVector(sample.up, 0.95);
-    desiredLook.copy(origin).addScaledVector(forward, 14).addScaledVector(sample.up, 0.7);
+    desiredPos.copy(origin).addScaledVector(forward, 1.15).addScaledVector(roof, 0.95);
+    desiredLook.copy(origin).addScaledVector(forward, 14).addScaledVector(roof, 0.7);
   } else if (cameraMode === 'hood') {
-    desiredPos.copy(origin).addScaledVector(forward, 0.55).addScaledVector(sample.up, 0.72);
-    desiredLook.copy(origin).addScaledVector(forward, 16).addScaledVector(sample.up, 0.55);
+    desiredPos.copy(origin).addScaledVector(forward, 0.55).addScaledVector(roof, 0.72);
+    desiredLook.copy(origin).addScaledVector(forward, 16).addScaledVector(roof, 0.55);
   } else {
-    desiredPos.copy(origin).addScaledVector(forward, -7.4).addScaledVector(sample.up, 2.45);
-    desiredLook.copy(origin).addScaledVector(forward, 7.5).addScaledVector(sample.up, 1.05);
+    desiredPos.copy(origin).addScaledVector(forward, -7.4).addScaledVector(roof, 2.45);
+    desiredLook.copy(origin).addScaledVector(forward, 7.5).addScaledVector(roof, 1.05);
   }
   const follow = cameraMode === 'chase' ? 3.6 : 7;
   camPos.lerp(desiredPos, 1 - Math.exp(-follow * dt));
   camLook.lerp(desiredLook, 1 - Math.exp(-5.5 * dt));
   camera.position.copy(camPos);
-  cameraRoll = damp(cameraRoll, -(input.steer || 0) * 0.07, 4, dt);
-  camera.up.set(Math.sin(cameraRoll), Math.cos(cameraRoll), 0);
+  const roll = models[0].roll;
+  const cos = Math.cos(roll);
+  const sin = Math.sin(roll);
+  camera.up.set(
+    frame.up.x * cos + frame.right.x * sin,
+    frame.up.y * cos + frame.right.y * sin,
+    frame.up.z * cos + frame.right.z * sin,
+  );
   camera.lookAt(camLook);
   dampFov(58 + Math.min(Math.max(player.speed, 0), 68) * 0.18, dt);
 }
@@ -235,9 +244,9 @@ function applyShot() {
   const shot = params.get('shot');
   if (!shot) return;
   const player = models[0].root.position;
-  const heading = race.cars[0].heading;
-  const fx = Math.sin(heading);
-  const fz = Math.cos(heading);
+  const frame = race.cars[0].compass || orientCompass(race.cars[0].heading);
+  const fx = frame.forward.x;
+  const fz = frame.forward.z;
   camera.up.set(0, 1, 0);
   if (shot === 'car') {
     camera.position.set(player.x - fx * 6.5 + fz * 3.4, player.y + 1.7, player.z - fz * 6.5 - fx * 3.4);
@@ -340,7 +349,11 @@ function bindInput() {
       player.z = sample.point.z;
       player.heading = Math.atan2(sample.tangent.x, sample.tangent.z);
       player.speed = Math.min(player.speed, 18);
+      player.latSpeed = 0;
+      player.yawRate = 0;
+      player.steerAngle = 0;
       player.slip = 0;
+      player.compass = orientCompass(player.heading, sample.up);
     }
   });
   window.addEventListener('keyup', (event) => keys.delete(event.key.toLowerCase()));
@@ -464,11 +477,12 @@ function createSmoke(targetScene) {
   function emit(car, sample) {
     const sprite = sprites[cursor];
     cursor = (cursor + 1) % sprites.length;
+    const frame = car.compass || orientCompass(car.heading, sample.up);
     const side = cursor % 2 === 0 ? -0.9 : 0.9;
     sprite.position.set(
-      car.x - Math.sin(car.heading) * 1.5 + sample.right.x * side,
+      car.x - frame.forward.x * 1.5 + frame.right.x * side,
       sample.height + 0.25,
-      car.z - Math.cos(car.heading) * 1.5 + sample.right.z * side,
+      car.z - frame.forward.z * 1.5 + frame.right.z * side,
     );
     sprite.userData.life = 0.8;
     sprite.visible = true;
