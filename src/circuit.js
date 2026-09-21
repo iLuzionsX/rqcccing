@@ -1,28 +1,26 @@
 import * as THREE from 'three';
 import { clamp } from './util.js';
 
-const CONTROL_POINTS = [
-  [0, 0.6, 0],
-  [70, 1.2, 40],
-  [150, 4, 110],
-  [190, 9, 200],
-  [120, 13, 280],
-  [20, 8, 310],
-  [-90, 4.5, 270],
-  [-170, 3, 190],
-  [-210, 7, 90],
-  [-170, 12, -10],
-  [-80, 7, -60],
-  [10, 2.5, -40],
-];
+// Closed rally stage. The grid leaves on the same east-northeast heading as the
+// old loop, climbs a ridge, drops into a valley, then climbs once more before
+// the finish. Straights and sweepers stay far enough apart that the banks
+// never fight each other.
+const HEADING = Math.PI / 3;
+const RADIUS = 152;
+const REACH = 148;
 
-export const LAKE = { x: -4, z: 160, radius: 58, y: 0.42 };
+export const LAKE = {
+  x: -RADIUS * Math.cos(HEADING),
+  z: RADIUS * Math.sin(HEADING),
+  radius: 54,
+  y: 0.4,
+};
 
 export function createCircuit(segments = 640) {
-  const points = CONTROL_POINTS.map((p) => new THREE.Vector3(p[0], p[1], p[2]));
+  const points = stagePoints();
   const curve = new THREE.CatmullRomCurve3(points, true, 'centripetal', 0.35);
   const raw = sampleCenterline(curve, segments);
-  const samples = frameSamples(raw);
+  const samples = smoothBanks(frameSamples(raw));
   const length = samples[samples.length - 1].distance;
 
   return {
@@ -38,6 +36,31 @@ export function createCircuit(segments = 640) {
       return sampleByDistance(samples, length, distance);
     },
   };
+}
+
+function stagePoints() {
+  const sh = Math.sin(HEADING);
+  const ch = Math.cos(HEADING);
+  const local = [];
+  const add = (u, v, y) => local.push([u, v, y]);
+  add(0, 0, 1.9);
+  add(74, 0, 2.15);
+  add(REACH, 0, 2.9);
+  const eastY = [8.8, 14.2, 17.2, 17.0, 16.2, 15.4];
+  for (let i = 1; i <= 6; i += 1) {
+    const t = (30 * i) * Math.PI / 180;
+    add(REACH + RADIUS * Math.sin(t), RADIUS - RADIUS * Math.cos(t), eastY[i - 1]);
+  }
+  add(46, RADIUS * 2, 14.2);
+  add(-46, RADIUS * 2, 10.6);
+  add(-REACH, RADIUS * 2, 6.2);
+  const westY = [2.4, 1.7, 2.6, 8.6, 13.0, 8.0];
+  for (let i = 1; i <= 6; i += 1) {
+    const t = (180 + 30 * i) * Math.PI / 180;
+    add(-REACH + RADIUS * Math.sin(t), RADIUS - RADIUS * Math.cos(t), westY[i - 1]);
+  }
+  add(-74, 0, 3.8);
+  return local.map(([u, v, y]) => new THREE.Vector3(u * sh - v * ch, y, u * ch + v * sh));
 }
 
 function sampleCenterline(curve, segments) {
@@ -56,17 +79,15 @@ function sampleCenterline(curve, segments) {
 }
 
 function frameSamples(raw) {
-  const frames = raw.map((sample, index) => {
-    const next = raw[(index + 1) % (raw.length - 1)];
+  const unique = raw.length - 1;
+  return raw.map((sample, index) => {
+    const next = raw[(index + 1) % unique];
     const curvature = sample.tangent.z * next.tangent.x - sample.tangent.x * next.tangent.z;
-    const bank = clamp(-curvature * 42, -0.26, 0.26);
     const worldUp = new THREE.Vector3(0, 1, 0);
     const right = new THREE.Vector3().crossVectors(worldUp, sample.tangent);
     if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
     right.normalize();
     const up = new THREE.Vector3().crossVectors(sample.tangent, right).normalize();
-    right.applyAxisAngle(sample.tangent, bank);
-    up.applyAxisAngle(sample.tangent, bank);
     return {
       t: sample.t,
       distance: sample.distance,
@@ -74,32 +95,99 @@ function frameSamples(raw) {
       tangent: sample.tangent,
       right,
       up,
-      bank,
+      bank: 0,
       curvature,
     };
   });
+}
+
+function smoothBanks(frames) {
+  const n = frames.length - 1;
+  const radius = 12;
+  const curvature = new Array(frames.length);
+  for (let i = 0; i < n; i += 1) {
+    let sum = 0;
+    let weight = 0;
+    for (let k = -radius; k <= radius; k += 1) {
+      const sample = frames[(i + k + n) % n];
+      const w = 1 - Math.abs(k) / (radius + 1);
+      sum += sample.curvature * w;
+      weight += w;
+    }
+    curvature[i] = sum / weight;
+  }
+  curvature[n] = curvature[0];
+  for (let i = 0; i < n; i += 1) {
+    const frame = frames[i];
+    frame.curvature = curvature[i];
+    frame.bank = clamp(-frame.curvature * 12, -0.2, 0.2);
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const right = new THREE.Vector3().crossVectors(worldUp, frame.tangent);
+    if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+    right.normalize();
+    const up = new THREE.Vector3().crossVectors(frame.tangent, right).normalize();
+    right.applyAxisAngle(frame.tangent, frame.bank);
+    up.applyAxisAngle(frame.tangent, frame.bank);
+    frame.right = right;
+    frame.up = up;
+  }
+  const last = frames[n];
+  const first = frames[0];
+  last.curvature = first.curvature;
+  last.bank = first.bank;
+  last.point.copy(first.point);
+  last.tangent.copy(first.tangent);
+  last.right.copy(first.right);
+  last.up.copy(first.up);
   return frames;
 }
 
 function querySamples(samples, x, z) {
   let best = 0;
   let bestD = Infinity;
+  let bestT = 0;
   const last = samples.length - 1;
   for (let i = 0; i < last; i += 1) {
-    const dx = x - samples[i].point.x;
-    const dz = z - samples[i].point.z;
+    const a = samples[i].point;
+    const b = samples[i + 1].point;
+    const abx = b.x - a.x;
+    const abz = b.z - a.z;
+    const len2 = abx * abx + abz * abz;
+    if (len2 < 1e-6) continue;
+    let t = ((x - a.x) * abx + (z - a.z) * abz) / len2;
+    t = clamp(t, 0, 1);
+    const dx = x - (a.x + abx * t);
+    const dz = z - (a.z + abz * t);
     const d = dx * dx + dz * dz;
     if (d < bestD) {
       bestD = d;
       best = i;
+      bestT = t;
     }
   }
-  const sample = samples[best];
-  const dx = x - sample.point.x;
-  const dz = z - sample.point.z;
-  const lateral = dx * sample.right.x + dz * sample.right.z;
-  const height = sample.point.y + lateral * sample.right.y;
-  return { ...sample, index: best, lateral, height };
+  const a = samples[best];
+  const b = samples[Math.min(last, best + 1)];
+  const t = bestT;
+  const point = a.point.clone().lerp(b.point, t);
+  const tangent = a.tangent.clone().lerp(b.tangent, t).normalize();
+  const right = a.right.clone().lerp(b.right, t).normalize();
+  const up = a.up.clone().lerp(b.up, t).normalize();
+  const lateral = (x - point.x) * right.x + (z - point.z) * right.z;
+  const height = point.y + lateral * right.y;
+  const span = b.distance - a.distance || 1;
+  return {
+    ...a,
+    point,
+    tangent,
+    right,
+    up,
+    curvature: a.curvature + (b.curvature - a.curvature) * t,
+    bank: a.bank + (b.bank - a.bank) * t,
+    distance: a.distance + span * t,
+    index: best,
+    lateral,
+    height,
+  };
 }
 
 function sampleByDistance(samples, length, distance) {
