@@ -5,7 +5,7 @@ export function createTrack(scene, circuit, textures) {
   const road = buildRoad(circuit, textures);
   scene.add(road);
 
-  const shoulders = buildShoulders(circuit);
+  const shoulders = buildShoulders(circuit, textures);
   scene.add(shoulders);
 
   const curbs = buildCurbs(circuit);
@@ -47,26 +47,27 @@ export function createTrack(scene, circuit, textures) {
 }
 
 function buildRoad(circuit, textures) {
-  const { positions, normals, uvs, indices } = ribbon(circuit.samples, -6, 6, 0.06, 0.06);
+  const { positions, normals, uvs, indices } = ribbon(circuit.samples, -6, 6, 0.06, 0.06, 2);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setAttribute('uv2', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(indices);
   geo.computeTangents();
 
   const material = new THREE.MeshPhysicalMaterial({
-    map: textures.colorMap,
-    normalMap: textures.normalMap,
-    normalScale: new THREE.Vector2(0.35, 0.35),
-    roughnessMap: textures.roughnessMap,
-    roughness: 1,
-    metalness: 0.08,
-    clearcoat: 0.85,
-    clearcoatRoughness: 0.06,
-    envMapIntensity: 1.5,
-    anisotropy: 0.8,
-    anisotropyRotation: Math.PI / 2,
+    map: textures.asphalt.map,
+    normalMap: textures.asphalt.normalMap,
+    normalScale: new THREE.Vector2(0.65, 0.65),
+    roughnessMap: textures.asphalt.roughnessMap,
+    aoMap: textures.asphalt.aoMap,
+    aoMapIntensity: 0.85,
+    roughness: 0.62,
+    metalness: 0.04,
+    clearcoat: 0.28,
+    clearcoatRoughness: 0.22,
+    envMapIntensity: 1.15,
   });
   const mesh = new THREE.Mesh(geo, material);
   mesh.receiveShadow = true;
@@ -74,28 +75,37 @@ function buildRoad(circuit, textures) {
   return mesh;
 }
 
-function buildShoulders(circuit) {
-  const left = ribbon(circuit.samples, -6, -10.4, 0.05, -0.95);
-  const right = ribbon(circuit.samples, 6, 10.4, 0.05, -0.95);
+function buildShoulders(circuit, textures) {
+  const left = ribbon(circuit.samples, -6, -10.4, 0.05, -0.95, 2);
+  const right = ribbon(circuit.samples, 6, 10.4, 0.05, -0.95, 2);
   const geo = new THREE.BufferGeometry();
   const positions = left.positions.concat(right.positions);
   const normals = left.normals.concat(right.normals);
-  const colors = left.colors.concat(right.colors);
+  const uvs = left.uvs.concat(right.uvs);
   const offset = left.positions.length / 3;
   const indices = left.indices.concat(right.indices.map((index) => index + offset));
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(indices);
+  geo.computeTangents();
   const mesh = new THREE.Mesh(
     geo,
-    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.94, metalness: 0 }),
+    new THREE.MeshStandardMaterial({
+      map: textures.gravel.map,
+      normalMap: textures.gravel.normalMap,
+      normalScale: new THREE.Vector2(0.8, 0.8),
+      roughnessMap: textures.gravel.roughnessMap,
+      roughness: 1,
+      metalness: 0,
+      envMapIntensity: 0.35,
+    }),
   );
   mesh.receiveShadow = true;
   return mesh;
 }
 
-function ribbon(samples, left, right, leftLift, rightLift) {
+function ribbon(samples, left, right, leftLift, rightLift, tileMeters = 7) {
   const positions = [];
   const normals = [];
   const uvs = [];
@@ -103,14 +113,15 @@ function ribbon(samples, left, right, leftLift, rightLift) {
   const indices = [];
   const gravel = new THREE.Color(0x6d6458);
   const grass = new THREE.Color(0x5d7a3e);
+  const span = Math.abs(right - left) / tileMeters;
   for (let i = 0; i < samples.length; i += 1) {
     const s = samples[i];
     const a = s.point.clone().addScaledVector(s.right, left).addScaledVector(s.up, leftLift);
     const b = s.point.clone().addScaledVector(s.right, right).addScaledVector(s.up, rightLift);
     positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
     normals.push(s.up.x, s.up.y, s.up.z, s.up.x, s.up.y, s.up.z);
-    const v = s.distance / 7;
-    uvs.push(0, v, 1, v);
+    const v = s.distance / tileMeters;
+    uvs.push(0, v, span, v);
     colors.push(gravel.r, gravel.g, gravel.b, grass.r, grass.g, grass.b);
   }
   const rows = samples.length;
