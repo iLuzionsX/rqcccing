@@ -111,22 +111,22 @@ function normalFromHeight(height, size, strength) {
 export function paintMaterial(color) {
   return new THREE.MeshPhysicalMaterial({
     color,
-    metalness: 0.62,
-    roughness: 0.22,
+    metalness: 0.55,
+    roughness: 0.16,
     clearcoat: 1,
-    clearcoatRoughness: 0.045,
-    envMapIntensity: 1.55,
+    clearcoatRoughness: 0.035,
+    envMapIntensity: 2.1,
   });
 }
 
 export function glassMaterial() {
   return new THREE.MeshPhysicalMaterial({
     color: 0x071018,
-    metalness: 1,
-    roughness: 0.035,
+    metalness: 0.85,
+    roughness: 0.03,
     clearcoat: 1,
-    clearcoatRoughness: 0.02,
-    envMapIntensity: 2.4,
+    clearcoatRoughness: 0.015,
+    envMapIntensity: 2.6,
   });
 }
 

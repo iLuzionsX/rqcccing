@@ -1,6 +1,7 @@
 import * as THREE from 'three';
+import { damp, clamp } from './util.js';
+import { orientCompass } from './compass.js';
 import { paintMaterial, glassMaterial, carbonMaterial, rubberMaterial, chromeMaterial } from './materials.js';
-import { bodyAttitude, orientCompass } from './compass.js';
 
 const _nose = new THREE.Vector3();
 const _right = new THREE.Vector3();
@@ -80,6 +81,8 @@ export function createCar(color, number) {
     spin: 0,
     pitch: 0,
     roll: 0,
+    bump: 0,
+    bumpVel: 0,
   };
 }
 
@@ -92,21 +95,28 @@ export function syncCar(model, vehicle, sample, dt, input) {
   model.root.quaternion.setFromRotationMatrix(_basis);
   model.root.position.set(vehicle.x, sample.height + 0.02, vehicle.z);
 
-  const attitude = bodyAttitude(vehicle.longAccel, vehicle.latAccel);
-  model.pitch += (attitude.pitch - model.pitch) * Math.min(1, dt * 5);
-  model.roll += (attitude.roll - model.roll) * Math.min(1, dt * 6);
-  model.chassis.rotation.x = model.pitch;
-  model.chassis.rotation.z = model.roll;
-  const squat = Math.max(0, -vehicle.longAccel) * 0.004 + Math.abs(vehicle.latAccel || 0) * 0.003;
-  model.chassis.position.y += (Math.min(squat, 0.05) - model.chassis.position.y) * Math.min(1, dt * 6);
-
   const throttle = input.throttle || 0;
   const brake = input.brake || 0;
-  model.spin += (vehicle.speed / 0.34) * dt;
-  model.steer += ((vehicle.steerAngle || 0) - model.steer) * Math.min(1, dt * 12);
+  const steer = input.steer || 0;
+  const targetPitch = clamp(-(vehicle.longG || 0) * 0.016, -0.075, 0.06);
+  const targetRoll = clamp((vehicle.latG || 0) * 0.03, -0.09, 0.09);
+  model.pitch = damp(model.pitch, targetPitch, 7, dt);
+  model.roll = damp(model.roll, targetRoll, 7, dt);
+  model.chassis.rotation.x = model.pitch;
+  model.chassis.rotation.z = model.roll;
+
+  const curb = Math.abs(sample.lateral) > 5.5 && Math.abs(sample.lateral) < 6.7 && Math.abs(vehicle.speed) > 10;
+  if (curb) model.bumpVel += 9 * dt;
+  model.bumpVel += (-model.bump * 90 - model.bumpVel * 9) * dt;
+  model.bump += model.bumpVel * dt;
+  model.root.position.y += model.bump * 0.018;
+
+  model.steer = damp(model.steer, vehicle.steerAngle || steer * 0.42, 12, dt);
   model.spinners.forEach((spinner, index) => {
-    spinner.rotation.x = model.spin;
-    if (index < 2) model.wheels[index].rotation.y = model.steer;
+    const front = index < 2;
+    const omega = front ? vehicle.frontOmega || 0 : vehicle.rearOmega || 0;
+    spinner.rotation.x += omega * dt;
+    if (front) model.wheels[index].rotation.y = model.steer;
   });
 
   const braking = brake > 0.2 || vehicle.speed < -0.5;
@@ -250,7 +260,7 @@ function fender(material, x, z) {
 
 function makeWheel(rubber, chrome) {
   const spinner = new THREE.Group();
-  const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.25, 22), rubber);
+  const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.26, 28), rubber);
   tire.rotation.z = Math.PI / 2;
   const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.27, 18), chrome);
   rim.rotation.z = Math.PI / 2;

@@ -10,7 +10,7 @@ const GradeShader = {
   uniforms: {
     tDiffuse: { value: null },
     aberration: { value: 0 },
-    vignette: { value: 0.42 },
+    vignette: { value: 0.28 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -33,9 +33,9 @@ const GradeShader = {
       float b = texture2D(tDiffuse, vUv - off).b;
       vec3 color = vec3(r, g, b);
       float luma = max(color.r, max(color.g, color.b));
-      float warm = smoothstep(0.05, 1.15, luma);
-      color += mix(vec3(-0.015, 0.0, 0.025), vec3(0.05, 0.018, -0.02), warm);
-      float vign = smoothstep(0.35, 0.95, dist);
+      float warm = smoothstep(0.08, 1.2, luma);
+      color += mix(vec3(-0.008, 0.0, 0.012), vec3(0.02, 0.008, -0.008), warm);
+      float vign = smoothstep(0.45, 1.05, dist);
       color *= mix(1.0, 1.0 - vignette, vign);
       gl_FragColor = vec4(max(color, 0.0), 1.0);
     }
@@ -47,9 +47,9 @@ export function createComposer(renderer, scene, camera, quality) {
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.22,
-    0.48,
-    1.15,
+    0.12,
+    0.42,
+    0.98,
   );
   if (quality.bloom) composer.addPass(bloom);
   const grade = new ShaderPass(GradeShader);
