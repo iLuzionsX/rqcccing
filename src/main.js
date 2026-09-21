@@ -58,7 +58,8 @@ const post = createComposer(renderer, scene, camera, quality);
 let audio = null;
 
 const keys = new Set();
-const touch = { left: false, right: false, gas: false, brake: false };
+const touch = { steer: 0, gas: false, brake: false };
+const wheelState = { rotation: 0, held: false, lastAngle: 0 };
 let cameraMode = 'title';
 let paused = false;
 let audioOn = false;
@@ -96,6 +97,7 @@ loadGameAssets(renderer).then((assets) => {
   }
   renderer.setAnimationLoop(() => {
     const dt = Math.min(clock.getDelta(), 0.05);
+    updateWheel(dt);
     if (!paused) step(dt);
     environment.update(dt, camera, lighting.sunDirection);
     track.update(dt);
@@ -162,6 +164,7 @@ function begin(resetRace = false) {
   hud.results.classList.add('hidden');
   hud.results.querySelector('#result-body').innerHTML = '';
   document.querySelector('#hud').classList.remove('hidden');
+  document.body.classList.add('driving');
   cameraMode = 'chase';
 }
 
@@ -187,7 +190,8 @@ function readInput() {
   if (bot && race.phase === 'race') {
     return { throttle: 1, brake: 0, steer: 0, handbrake: 0 };
   }
-  const steer = (pressed('arrowright', 'd') || touch.right ? 1 : 0) - (pressed('arrowleft', 'a') || touch.left ? 1 : 0);
+  const keysSteer = (pressed('arrowright', 'd') ? 1 : 0) - (pressed('arrowleft', 'a') ? 1 : 0);
+  const steer = clamp(keysSteer + touch.steer, -1, 1);
   return {
     throttle: pressed('arrowup', 'w') || touch.gas ? 1 : 0,
     brake: pressed('arrowdown', 's') || touch.brake ? 1 : 0,
@@ -366,23 +370,94 @@ function bindInput() {
   window.addEventListener('keyup', (event) => keys.delete(event.key.toLowerCase()));
   bindHold('gas', 'gas');
   bindHold('brake', 'brake');
-  bindHold('left', 'left');
-  bindHold('right', 'right');
+  bindWheel();
+  lockPageZoom();
 }
 
 function bindHold(id, field) {
   const el = document.getElementById(id);
   const on = (event) => {
     touch[field] = true;
+    try { el.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ }
     event.preventDefault();
   };
-  const off = () => {
+  const off = (event) => {
+    if (event.pointerId != null && el.hasPointerCapture(event.pointerId)) el.releasePointerCapture(event.pointerId);
     touch[field] = false;
   };
   el.addEventListener('pointerdown', on);
   el.addEventListener('pointerup', off);
-  el.addEventListener('pointerleave', off);
   el.addEventListener('pointercancel', off);
+}
+
+const WHEEL_LOCK = 1.15;
+
+function bindWheel() {
+  const wheel = document.getElementById('wheel');
+  const rotor = document.getElementById('wheel-rotor');
+  const angleOf = (event) => {
+    const rect = wheel.getBoundingClientRect();
+    const x = event.clientX - (rect.left + rect.width / 2);
+    const y = event.clientY - (rect.top + rect.height / 2);
+    return Math.atan2(x, -y);
+  };
+  wheel.addEventListener('pointerdown', (event) => {
+    wheelState.held = true;
+    wheelState.pointerId = event.pointerId;
+    wheelState.lastAngle = angleOf(event);
+    try { wheel.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ }
+    event.preventDefault();
+  });
+  wheel.addEventListener('pointermove', (event) => {
+    if (!wheelState.held || event.pointerId !== wheelState.pointerId) return;
+    const next = angleOf(event);
+    let delta = next - wheelState.lastAngle;
+    if (delta > Math.PI) delta -= Math.PI * 2;
+    if (delta < -Math.PI) delta += Math.PI * 2;
+    wheelState.lastAngle = next;
+    wheelState.rotation = clamp(wheelState.rotation + delta, -WHEEL_LOCK, WHEEL_LOCK);
+    applyWheel(rotor);
+  });
+  const release = (event) => {
+    if (event.pointerId !== wheelState.pointerId) return;
+    if (wheel.hasPointerCapture(event.pointerId)) wheel.releasePointerCapture(event.pointerId);
+    wheelState.held = false;
+    wheelState.pointerId = null;
+  };
+  wheel.addEventListener('pointerup', release);
+  wheel.addEventListener('pointercancel', release);
+}
+
+function updateWheel(dt) {
+  if (!wheelState.held) {
+    wheelState.rotation += (0 - wheelState.rotation) * (1 - Math.exp(-8 * dt));
+    if (Math.abs(wheelState.rotation) < 0.008) wheelState.rotation = 0;
+  }
+  touch.steer = wheelState.rotation / WHEEL_LOCK;
+  const rotor = document.getElementById('wheel-rotor');
+  if (rotor) applyWheel(rotor);
+}
+
+function applyWheel(rotor) {
+  touch.steer = wheelState.rotation / WHEEL_LOCK;
+  rotor.style.transform = `rotate(${wheelState.rotation}rad)`;
+  const wheel = document.getElementById('wheel');
+  wheel.setAttribute('aria-valuenow', touch.steer.toFixed(2));
+  wheel.setAttribute('aria-valuetext', touch.steer > 0.08 ? 'Right' : touch.steer < -0.08 ? 'Left' : 'Centered');
+}
+
+function lockPageZoom() {
+  const block = (event) => event.preventDefault();
+  document.addEventListener('gesturestart', block, { passive: false });
+  document.addEventListener('gesturechange', block, { passive: false });
+  document.addEventListener('gestureend', block, { passive: false });
+  document.addEventListener('touchmove', (event) => {
+    if (event.touches.length > 1) event.preventDefault();
+  }, { passive: false });
+  window.addEventListener('wheel', (event) => {
+    if (event.ctrlKey) event.preventDefault();
+  }, { passive: false });
+  document.addEventListener('contextmenu', block);
 }
 
 function resize() {
