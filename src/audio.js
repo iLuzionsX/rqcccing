@@ -35,23 +35,42 @@ export function createAudio() {
   windGain.connect(master);
   wind.start();
 
+  const scrub = ctx.createBufferSource();
+  scrub.buffer = noiseBuffer(ctx);
+  scrub.loop = true;
+  const scrubFilter = ctx.createBiquadFilter();
+  scrubFilter.type = 'bandpass';
+  scrubFilter.frequency.value = 900;
+  scrubFilter.Q.value = 0.7;
+  const scrubGain = ctx.createGain();
+  scrubGain.gain.value = 0;
+  scrub.connect(scrubFilter);
+  scrubFilter.connect(scrubGain);
+  scrubGain.connect(master);
+  scrub.start();
+
   return {
     ctx,
     resume() {
       return ctx.resume();
     },
-    update(speed, throttle) {
+    update(speed, throttle, gear = 1, slip = 0) {
       const now = ctx.currentTime;
-      const rpm = Math.min(1, Math.max(0, speed / 70));
-      const gear = Math.min(5, Math.floor(rpm * 6));
-      const local = rpm * 6 - gear;
-      const freq = 48 + local * 92 + gear * 8;
-      engine.frequency.setTargetAtTime(freq, now, 0.04);
+      const kmh = Math.max(0, speed) * 3.6;
+      const bands = [0, 42, 78, 118, 158, 205, 280];
+      const index = Math.min(6, Math.max(1, gear));
+      const local = Math.min(1, Math.max(0, (kmh - bands[index - 1]) / (bands[index] - bands[index - 1])));
+      const freq = 52 + local * 128 + (index - 1) * 6;
+      engine.frequency.setTargetAtTime(freq, now, 0.045);
       engine2.frequency.setTargetAtTime(freq * 0.5, now, 0.05);
-      filter.frequency.setTargetAtTime(280 + local * 1800 + throttle * 700, now, 0.05);
-      gain.gain.setTargetAtTime(0.018 + throttle * 0.03 + rpm * 0.02, now, 0.05);
-      windGain.gain.setTargetAtTime(Math.min(0.04, rpm * rpm * 0.05), now, 0.1);
-      windFilter.frequency.setTargetAtTime(300 + rpm * 1800, now, 0.1);
+      filter.frequency.setTargetAtTime(260 + local * 1900 + throttle * 900, now, 0.05);
+      gain.gain.setTargetAtTime(0.016 + throttle * 0.034 + local * 0.012, now, 0.05);
+      const rpm = Math.min(1, kmh / 250);
+      windGain.gain.setTargetAtTime(Math.min(0.045, rpm * rpm * 0.055), now, 0.1);
+      windFilter.frequency.setTargetAtTime(280 + rpm * 1900, now, 0.1);
+      const scrub = Math.min(1, Math.max(0, Math.abs(slip) - 0.16) * 2.8);
+      scrubGain.gain.setTargetAtTime(scrub * (0.012 + rpm * 0.03), now, 0.04);
+      scrubFilter.frequency.setTargetAtTime(700 + scrub * 1800, now, 0.05);
     },
     tone(freq, duration, type = 'sine', level = 0.06) {
       const osc = ctx.createOscillator();

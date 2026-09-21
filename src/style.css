@@ -85,6 +85,13 @@ button.drive:hover, #again:hover { background: rgba(255, 177, 90, 0.16); }
   letter-spacing: 0.04em;
 }
 
+.credits {
+  margin-top: 10px;
+  color: var(--dim);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
 #speed-wrap {
   position: absolute;
   left: 28px;

@@ -3,25 +3,14 @@ import { Reflector } from 'three/addons/objects/Reflector.js';
 import { fbm, mulberry32, smoothstep, lerp } from './util.js';
 import { softCircleTexture } from './materials.js';
 
-export function createEnvironment(scene, circuit, quality) {
-  const terrain = buildTerrain(circuit, quality);
+export function createEnvironment(scene, circuit, quality, assets) {
+  const terrain = buildTerrain(circuit, quality, assets.grass);
   scene.add(terrain);
 
   const water = buildLake(circuit, quality);
   scene.add(water);
 
-  const mountains = buildMountains(circuit);
-  scene.add(mountains);
-
-  const forest = buildForest(circuit, quality);
-  scene.add(forest.trunks);
-  scene.add(forest.foliage);
-
-  const rocks = buildRocks(circuit, quality);
-  scene.add(rocks);
-
-  const clouds = buildClouds();
-  for (const cloud of clouds.meshes) scene.add(cloud);
+  scatterProps(scene, circuit, quality, assets.props);
 
   const dust = buildDust();
   scene.add(dust.points);
@@ -33,9 +22,8 @@ export function createEnvironment(scene, circuit, quality) {
     water,
     update(dt, camera, sunDirection) {
       water.material.uniforms.time.value += dt;
-      clouds.update(dt);
       dust.update(dt, camera);
-      glare.position.copy(camera.position).addScaledVector(sunDirection, 780);
+      glare.position.copy(camera.position).addScaledVector(sunDirection, 900);
     },
   };
 }
@@ -59,16 +47,14 @@ function heightAt(x, z, circuit) {
   return h;
 }
 
-function buildTerrain(circuit, quality) {
-  const divisions = quality.low ? 120 : 170;
+function buildTerrain(circuit, quality, grassMaps) {
+  const divisions = quality.low ? 140 : 190;
   const geo = new THREE.PlaneGeometry(980, 980, divisions, divisions);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
-  const grass = new THREE.Color(0x4e7a38);
-  const dry = new THREE.Color(0x8d7a48);
-  const rock = new THREE.Color(0x7a675c);
-  const sand = new THREE.Color(0x8d7356);
+  const sand = new THREE.Color(0xc4b39a);
+  const rock = new THREE.Color(0x9a8d84);
   const color = new THREE.Color();
 
   for (let i = 0; i < pos.count; i += 1) {
@@ -76,24 +62,33 @@ function buildTerrain(circuit, quality) {
     const z = pos.getZ(i);
     const h = heightAt(x, z, circuit);
     pos.setY(i, h);
-    const n = fbm(x * 0.03, z * 0.03, 3);
+    const n = fbm(x * 0.02, z * 0.02, 3);
     const dl = Math.hypot(x - circuit.lake.x, z - circuit.lake.z);
-    color.copy(grass).lerp(dry, n);
-    if (h > 8) color.lerp(rock, smoothstep(8, 14, h));
-    if (dl < circuit.lake.radius + 18) color.lerp(sand, smoothstep(circuit.lake.radius + 18, circuit.lake.radius, dl));
+    color.setScalar(0.78 + n * 0.22);
+    if (h > 7) color.lerp(rock, smoothstep(7, 16, h));
+    if (dl < circuit.lake.radius + 22) color.lerp(sand, smoothstep(circuit.lake.radius + 22, circuit.lake.radius + 2, dl));
     colors[i * 3] = color.r;
     colors[i * 3 + 1] = color.g;
     colors[i * 3 + 2] = color.b;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.setAttribute('uv2', geo.getAttribute('uv'));
   geo.computeVertexNormals();
+  geo.computeTangents();
 
   const mesh = new THREE.Mesh(
     geo,
     new THREE.MeshStandardMaterial({
+      map: grassMaps.map,
+      normalMap: grassMaps.normalMap,
+      normalScale: new THREE.Vector2(0.55, 0.55),
+      roughnessMap: grassMaps.roughnessMap,
+      aoMap: grassMaps.aoMap,
+      aoMapIntensity: 0.65,
       vertexColors: true,
-      roughness: 0.96,
+      roughness: 1,
       metalness: 0,
+      envMapIntensity: 0.25,
     }),
   );
   mesh.receiveShadow = true;
@@ -182,158 +177,88 @@ function waterShader(lake) {
   };
 }
 
-function buildMountains(circuit) {
-  const geo = new THREE.ConeGeometry(1, 1, 7);
-  geo.translate(0, 0.5, 0);
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 0.92,
-    metalness: 0.02,
-    flatShading: true,
-  });
-  const count = 28;
-  const mesh = new THREE.InstancedMesh(geo, mat, count);
-  const dummy = new THREE.Object3D();
-  const color = new THREE.Color();
-  const origin = new THREE.Vector2(-18, 128);
-  for (let i = 0; i < count; i += 1) {
-    const a = (i / count) * Math.PI * 2 + (i % 3) * 0.08;
-    const radius = 430 + (i % 5) * 28;
-    const height = 70 + (i % 7) * 18;
-    const width = 46 + (i % 4) * 14;
-    dummy.position.set(origin.x + Math.cos(a) * radius, 0, origin.y + Math.sin(a) * radius);
-    dummy.scale.set(width, height, width);
-    dummy.rotation.y = a;
-    dummy.updateMatrix();
-    mesh.setMatrixAt(i, dummy.matrix);
-    color.set(i % 2 === 0 ? 0x8a6558 : 0x6e534c).multiplyScalar(0.85 + (i % 5) * 0.05);
-    mesh.setColorAt(i, color);
-  }
-  mesh.instanceMatrix.needsUpdate = true;
-  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  mesh.castShadow = false;
-  mesh.receiveShadow = true;
-  return mesh;
+function scatterProps(scene, circuit, quality, props) {
+  const specs = [
+    { gltf: props.tree, count: quality.low ? 12 : 26, height: 6.2, clearance: 16, seed: 11 },
+    { gltf: props.shrubA, count: quality.low ? 18 : 40, height: 1.15, clearance: 11, seed: 19 },
+    { gltf: props.shrubB, count: quality.low ? 16 : 34, height: 0.85, clearance: 10.5, seed: 23 },
+    { gltf: props.grassPatch, count: quality.low ? 30 : 70, height: 0.42, clearance: 8.2, seed: 31 },
+    { gltf: props.rock, count: quality.low ? 14 : 28, height: 0.9, clearance: 9.2, seed: 37 },
+    { gltf: props.boulder, count: quality.low ? 8 : 16, height: 2.1, clearance: 13, seed: 41 },
+    { gltf: props.flower, count: quality.low ? 12 : 28, height: 0.28, clearance: 8.6, seed: 47 },
+  ];
+  for (const spec of specs) scatter(scene, circuit, spec);
 }
 
-function buildForest(circuit, quality) {
-  const rand = mulberry32(11);
-  const trunkGeo = new THREE.CylinderGeometry(0.12, 0.22, 1.8, 5);
-  trunkGeo.translate(0, 0.9, 0);
-  const foliageGeo = new THREE.ConeGeometry(1.15, 2.8, 6);
-  foliageGeo.translate(0, 2.7, 0);
-  const trunks = new THREE.InstancedMesh(
-    trunkGeo,
-    new THREE.MeshStandardMaterial({ color: 0x4a3428, roughness: 0.9 }),
-    quality.trees,
-  );
-  const foliage = new THREE.InstancedMesh(
-    foliageGeo,
-    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.86 }),
-    quality.trees,
-  );
+function scatter(scene, circuit, spec) {
+  const parts = bakeParts(spec.gltf);
+  if (!parts.length) return;
+  const bounds = new THREE.Box3();
+  for (const part of parts) {
+    part.geo.computeBoundingBox();
+    bounds.union(part.geo.boundingBox);
+  }
+  const modelHeight = Math.max(0.001, bounds.max.y - bounds.min.y);
+  const meshes = parts.map((part) => {
+    const mesh = new THREE.InstancedMesh(part.geo, part.material, spec.count);
+    mesh.count = 0;
+    const leafy = part.material.transparent || part.material.alphaTest > 0 || part.material.alphaMap;
+    mesh.castShadow = !leafy;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+    return mesh;
+  });
+  const rand = mulberry32(spec.seed);
   const dummy = new THREE.Object3D();
-  const tint = new THREE.Color();
   let placed = 0;
   let guard = 0;
-  while (placed < quality.trees && guard < quality.trees * 30) {
+  while (placed < spec.count && guard < spec.count * 40) {
     guard += 1;
     const x = (rand() - 0.5) * 760;
     const z = (rand() - 0.5) * 760;
     const q = circuit.query(x, z);
     const dl = Math.hypot(x - circuit.lake.x, z - circuit.lake.z);
-    if (Math.abs(q.lateral) < 14 || dl < circuit.lake.radius + 6) continue;
+    if (Math.abs(q.lateral) < spec.clearance || dl < circuit.lake.radius + 4) continue;
     const y = heightAt(x, z, circuit);
-    if (y < circuit.lake.y + 0.2 || y > 11) continue;
-    const scale = 0.75 + rand() * 1.35;
-    dummy.position.set(x, y, z);
-    dummy.rotation.y = rand() * Math.PI;
+    if (y < circuit.lake.y + 0.15 || y > 14) continue;
+    const scale = (spec.height * (0.72 + rand() * 0.55)) / modelHeight;
+    dummy.position.set(x, y - bounds.min.y * scale, z);
+    dummy.rotation.set(0, rand() * Math.PI * 2, 0);
     dummy.scale.setScalar(scale);
     dummy.updateMatrix();
-    trunks.setMatrixAt(placed, dummy.matrix);
-    foliage.setMatrixAt(placed, dummy.matrix);
-    tint.set(0x2f6a32).lerp(new THREE.Color(0x6f8f3a), rand());
-    foliage.setColorAt(placed, tint);
+    for (const mesh of meshes) mesh.setMatrixAt(placed, dummy.matrix);
     placed += 1;
   }
-  trunks.count = placed;
-  foliage.count = placed;
-  trunks.instanceMatrix.needsUpdate = true;
-  foliage.instanceMatrix.needsUpdate = true;
-  if (foliage.instanceColor) foliage.instanceColor.needsUpdate = true;
-  trunks.receiveShadow = true;
-  foliage.receiveShadow = true;
-  return { trunks, foliage };
-}
-
-function buildRocks(circuit, quality) {
-  const rand = mulberry32(29);
-  const geo = new THREE.DodecahedronGeometry(0.6, 0);
-  const mesh = new THREE.InstancedMesh(
-    geo,
-    new THREE.MeshStandardMaterial({ color: 0x6d625c, roughness: 0.88, flatShading: true }),
-    quality.rocks,
-  );
-  const dummy = new THREE.Object3D();
-  let placed = 0;
-  let guard = 0;
-  while (placed < quality.rocks && guard < quality.rocks * 20) {
-    guard += 1;
-    const x = (rand() - 0.5) * 700;
-    const z = (rand() - 0.5) * 700;
-    const q = circuit.query(x, z);
-    const dl = Math.hypot(x - circuit.lake.x, z - circuit.lake.z);
-    if (Math.abs(q.lateral) < 9.5 || dl < circuit.lake.radius) continue;
-    const y = heightAt(x, z, circuit);
-    dummy.position.set(x, y + 0.2, z);
-    dummy.rotation.set(rand(), rand(), rand());
-    dummy.scale.set(0.4 + rand(), 0.25 + rand() * 0.6, 0.4 + rand());
-    dummy.updateMatrix();
-    mesh.setMatrixAt(placed, dummy.matrix);
-    placed += 1;
+  for (const mesh of meshes) {
+    mesh.count = placed;
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
   }
-  mesh.count = placed;
-  mesh.instanceMatrix.needsUpdate = true;
-  mesh.receiveShadow = true;
-  return mesh;
 }
 
-function buildClouds() {
-  const map = softCircleTexture();
-  const meshes = [];
-  const material = new THREE.MeshBasicMaterial({
-    map,
-    color: 0xffd0ae,
-    transparent: true,
-    opacity: 0.28,
-    depthWrite: false,
-    fog: true,
+function bakeParts(gltf) {
+  const root = gltf.scene;
+  root.updateMatrixWorld(true);
+  const parts = [];
+  root.traverse((obj) => {
+    if (!obj.isMesh) return;
+    const geo = obj.geometry.clone();
+    geo.applyMatrix4(obj.matrixWorld);
+    const material = obj.material;
+    if (Array.isArray(material)) {
+      parts.push({ geo, material: material[0] });
+      return;
+    }
+    if (material.alphaMap || (material.map && material.transparent)) {
+      material.alphaTest = Math.max(material.alphaTest || 0, 0.4);
+      material.transparent = false;
+      material.depthWrite = true;
+      material.side = THREE.DoubleSide;
+    }
+    material.envMapIntensity = Math.min(material.envMapIntensity || 1, 0.6);
+    parts.push({ geo, material });
   });
-  const seeds = [
-    [-40, 78, 40, 90],
-    [120, 96, 180, 120],
-    [-180, 110, 80, 80],
-    [40, 130, 300, 140],
-    [-90, 88, 220, 70],
-    [200, 120, 40, 100],
-    [-220, 140, 200, 110],
-  ];
-  for (const [x, y, z, scale] of seeds) {
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(scale, scale * 0.42), material.clone());
-    mesh.material.opacity = 0.18 + (scale % 5) * 0.02;
-    mesh.position.set(x, y, z);
-    mesh.lookAt(0, y - 10, 80);
-    meshes.push(mesh);
-  }
-  return {
-    meshes,
-    update(dt) {
-      for (const mesh of meshes) {
-        mesh.position.x += dt * 1.4;
-        if (mesh.position.x > 420) mesh.position.x = -420;
-      }
-    },
-  };
+  return parts;
 }
 
 function buildDust() {
@@ -389,7 +314,7 @@ function buildSunGlare() {
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       depthTest: false,
-      opacity: 0.72,
+      opacity: 0.28,
     }),
   );
   sprite.scale.set(150, 150, 1);
