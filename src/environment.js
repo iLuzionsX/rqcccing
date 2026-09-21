@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/addons/objects/Reflector.js';
-import { fbm, mulberry32, smoothstep, lerp } from './util.js';
+import { fbm, mulberry32, smoothstep } from './util.js';
 import { softCircleTexture } from './materials.js';
+import { surfaceHeight, terrainHeight } from './ground.js';
 
 export function createEnvironment(scene, circuit, quality, assets) {
   const terrain = buildTerrain(circuit, quality, assets.grass);
@@ -28,27 +29,8 @@ export function createEnvironment(scene, circuit, quality, assets) {
   };
 }
 
-function heightAt(x, z, circuit) {
-  const lake = circuit.lake;
-  let h = fbm(x * 0.0042, z * 0.0042, 5) * 16 - 2.4;
-  h += (fbm(x * 0.018, z * 0.018, 3) - 0.5) * 2.2;
-  const dl = Math.hypot(x - lake.x, z - lake.z);
-  const shore = smoothstep(lake.radius + 30, lake.radius, dl);
-  const submerged = smoothstep(lake.radius, lake.radius * 0.62, dl);
-  h = lerp(h, lake.y + 0.08, shore);
-  h = lerp(h, lake.y - 1.4, submerged);
-
-  const q = circuit.query(x, z);
-  const lateral = Math.abs(q.lateral);
-  if (lateral < 28) {
-    const blend = smoothstep(7.5, 28, lateral);
-    h = lerp(q.height - 1.05, h, blend);
-  }
-  return h;
-}
-
 function buildTerrain(circuit, quality, grassMaps) {
-  const divisions = quality.low ? 140 : 190;
+  const divisions = quality.low ? 160 : 230;
   const geo = new THREE.PlaneGeometry(980, 980, divisions, divisions);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
@@ -60,7 +42,7 @@ function buildTerrain(circuit, quality, grassMaps) {
   for (let i = 0; i < pos.count; i += 1) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
-    const h = heightAt(x, z, circuit);
+    const h = terrainHeight(x, z, circuit);
     pos.setY(i, h);
     const n = fbm(x * 0.02, z * 0.02, 3);
     const dl = Math.hypot(x - circuit.lake.x, z - circuit.lake.z);
@@ -179,13 +161,13 @@ function waterShader(lake) {
 
 function scatterProps(scene, circuit, quality, props) {
   const specs = [
-    { gltf: props.tree, count: quality.low ? 12 : 26, height: 6.2, clearance: 16, seed: 11 },
-    { gltf: props.shrubA, count: quality.low ? 18 : 40, height: 1.15, clearance: 11, seed: 19 },
-    { gltf: props.shrubB, count: quality.low ? 16 : 34, height: 0.85, clearance: 10.5, seed: 23 },
-    { gltf: props.grassPatch, count: quality.low ? 30 : 70, height: 0.42, clearance: 8.2, seed: 31 },
-    { gltf: props.rock, count: quality.low ? 14 : 28, height: 0.9, clearance: 9.2, seed: 37 },
-    { gltf: props.boulder, count: quality.low ? 8 : 16, height: 2.1, clearance: 13, seed: 41 },
-    { gltf: props.flower, count: quality.low ? 12 : 28, height: 0.28, clearance: 8.6, seed: 47 },
+    { gltf: props.tree, count: quality.low ? 12 : 26, height: 6.2, clearance: 20, seed: 11 },
+    { gltf: props.shrubA, count: quality.low ? 18 : 40, height: 1.15, clearance: 15, seed: 19 },
+    { gltf: props.shrubB, count: quality.low ? 16 : 34, height: 0.85, clearance: 14.5, seed: 23 },
+    { gltf: props.grassPatch, count: quality.low ? 30 : 70, height: 0.42, clearance: 14, seed: 31 },
+    { gltf: props.rock, count: quality.low ? 14 : 28, height: 0.9, clearance: 14.5, seed: 37 },
+    { gltf: props.boulder, count: quality.low ? 8 : 16, height: 2.1, clearance: 18, seed: 41 },
+    { gltf: props.flower, count: quality.low ? 12 : 28, height: 0.28, clearance: 14, seed: 47 },
   ];
   for (const spec of specs) scatter(scene, circuit, spec);
 }
@@ -219,8 +201,8 @@ function scatter(scene, circuit, spec) {
     const q = circuit.query(x, z);
     const dl = Math.hypot(x - circuit.lake.x, z - circuit.lake.z);
     if (Math.abs(q.lateral) < spec.clearance || dl < circuit.lake.radius + 4) continue;
-    const y = heightAt(x, z, circuit);
-    if (y < circuit.lake.y + 0.15 || y > 14) continue;
+    const y = surfaceHeight(x, z, circuit);
+    if (y < circuit.lake.y + 0.15 || y > 22) continue;
     const scale = (spec.height * (0.72 + rand() * 0.55)) / modelHeight;
     dummy.position.set(x, y - bounds.min.y * scale, z);
     dummy.rotation.set(0, rand() * Math.PI * 2, 0);
