@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { detectQuality, damp, clamp } from './util.js';
+import { detectQuality, clamp } from './util.js';
+import { orientCompass } from './compass.js';
 import { loadGameAssets } from './assets.js';
 import { createCircuit } from './circuit.js';
 import { createLighting } from './lighting.js';
@@ -65,7 +66,6 @@ let beepState = -1;
 const smoke = createSmoke(scene);
 const minimap = setupMinimap(circuit);
 
-let cameraRoll = 0;
 const camPos = new THREE.Vector3(40, 8, -20);
 const camLook = new THREE.Vector3();
 const desiredPos = new THREE.Vector3();
@@ -220,7 +220,8 @@ function updateTitleCamera(dt) {
 function updateChaseCamera(dt, input) {
   const player = race.cars[0];
   const sample = circuit.query(player.x, player.z);
-  forward.set(Math.sin(player.heading), 0, Math.cos(player.heading));
+  const frame = player.compass || orientCompass(player.heading, sample.up);
+  forward.set(frame.forward.x, frame.forward.y, frame.forward.z);
   const origin = models[0].root.position;
   if (cameraMode === 'bumper') {
     desiredPos.copy(origin).addScaledVector(forward, 1.15).addScaledVector(sample.up, 0.95);
@@ -233,16 +234,23 @@ function updateChaseCamera(dt, input) {
     const back = 6.7 + Math.min(Math.max(player.speed, 0), 55) * 0.04;
     const height = 2.05 + Math.min(Math.max(player.speed, 0), 55) * 0.012;
     desiredPos.copy(origin).addScaledVector(forward, -back).addScaledVector(sample.up, height);
-    desiredPos.addScaledVector(sample.right, clamp(lat, -8, 8) * 0.07);
+    desiredPos.x += frame.right.x * clamp(lat, -8, 8) * 0.07;
+    desiredPos.y += frame.right.y * clamp(lat, -8, 8) * 0.07;
+    desiredPos.z += frame.right.z * clamp(lat, -8, 8) * 0.07;
     desiredLook.copy(origin).addScaledVector(forward, 9).addScaledVector(sample.up, 0.92);
   }
   const follow = cameraMode === 'chase' ? 4.6 : 8;
   camPos.lerp(desiredPos, 1 - Math.exp(-follow * dt));
   camLook.lerp(desiredLook, 1 - Math.exp(-6.2 * dt));
   camera.position.copy(camPos);
-  const lat = player.latG || 0;
-  cameraRoll = damp(cameraRoll, clamp(-lat * 0.04 - (input.steer || 0) * 0.015, -0.12, 0.12), 5.5, dt);
-  camera.up.set(Math.sin(cameraRoll), Math.cos(cameraRoll), 0);
+  const roll = models[0].roll;
+  const cos = Math.cos(roll);
+  const sin = Math.sin(roll);
+  camera.up.set(
+    frame.up.x * cos + frame.right.x * sin,
+    frame.up.y * cos + frame.right.y * sin,
+    frame.up.z * cos + frame.right.z * sin,
+  );
   camera.lookAt(camLook);
   dampFov(58 + Math.min(Math.max(player.speed, 0), 70) * 0.15 + (input.throttle || 0) * 1.2, dt);
 }
@@ -352,6 +360,7 @@ function bindInput() {
       player.vz = Math.cos(player.heading) * player.speed;
       player.yawRate = 0;
       player.slip = 0;
+      player.compass = orientCompass(player.heading, sample.up);
     }
   });
   window.addEventListener('keyup', (event) => keys.delete(event.key.toLowerCase()));

@@ -1,4 +1,5 @@
 import { clamp, wrapPi } from './util.js';
+import { orientCompass } from './compass.js';
 
 const MASS = 1280;
 const INERTIA = 1750;
@@ -31,6 +32,10 @@ export function createVehicle(kind) {
     shiftTimer: 0,
     longG: 0,
     latG: 0,
+    longAccel: 0,
+    latAccel: 0,
+    latSpeed: 0,
+    compass: orientCompass(0),
     distance: 0,
     sinceLine: 0,
     completed: 0,
@@ -63,6 +68,10 @@ export function placeVehicle(vehicle, circuit, distance, lateral) {
   vehicle.shiftTimer = 0;
   vehicle.longG = 0;
   vehicle.latG = 0;
+  vehicle.longAccel = 0;
+  vehicle.latAccel = 0;
+  vehicle.latSpeed = 0;
+  vehicle.compass = orientCompass(vehicle.heading, sample.up);
 }
 
 export function updateVehicle(vehicle, circuit, dt, input, length) {
@@ -177,13 +186,18 @@ function substep(vehicle, circuit, h, input) {
   vehicle.speed = vLong;
   vehicle.heading = wrapPi(vehicle.heading + vehicle.yawRate * h);
 
-  const sin = Math.sin(vehicle.heading);
-  const cos = Math.cos(vehicle.heading);
-  vehicle.vx = sin * vLong + cos * vLat;
-  vehicle.vz = cos * vLong - sin * vLat;
+  const frame = orientCompass(vehicle.heading, sample.up);
+  vehicle.compass = frame;
+  vehicle.vx = frame.forward.x * vLong + frame.right.x * vLat;
+  vehicle.vz = frame.forward.z * vLong + frame.right.z * vLat;
   vehicle.x += vehicle.vx * h;
   vehicle.z += vehicle.vz * h;
   contain(vehicle, circuit);
+  const planted = circuit.query(vehicle.x, vehicle.z);
+  vehicle.compass = orientCompass(vehicle.heading, planted.up);
+  vehicle.longAccel = vehicle.longG;
+  vehicle.latAccel = vehicle.latG;
+  vehicle.latSpeed = vehicle.vLat;
 }
 
 function contain(vehicle, circuit) {

@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { damp, clamp } from './util.js';
+import { orientCompass } from './compass.js';
 import { paintMaterial, glassMaterial, carbonMaterial, rubberMaterial, chromeMaterial } from './materials.js';
 
 const _nose = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _up = new THREE.Vector3();
+const _basis = new THREE.Matrix4();
 
 export function createCar(color, number) {
   const paint = paintMaterial(color);
@@ -85,20 +87,19 @@ export function createCar(color, number) {
 }
 
 export function syncCar(model, vehicle, sample, dt, input) {
-  _nose.set(Math.sin(vehicle.heading), 0, Math.cos(vehicle.heading));
-  _nose.addScaledVector(sample.up, -_nose.dot(sample.up));
-  if (_nose.lengthSq() < 1e-8) _nose.copy(sample.tangent);
-  _nose.normalize();
-  _right.crossVectors(sample.up, _nose).normalize();
-  _up.copy(sample.up);
+  const frame = vehicle.compass || orientCompass(vehicle.heading, sample.up);
+  _nose.set(frame.forward.x, frame.forward.y, frame.forward.z);
+  _right.set(frame.right.x, frame.right.y, frame.right.z);
+  _up.set(frame.up.x, frame.up.y, frame.up.z);
+  _basis.makeBasis(_right, _up, _nose);
+  model.root.quaternion.setFromRotationMatrix(_basis);
   model.root.position.set(vehicle.x, sample.height + 0.02, vehicle.z);
-  model.root.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(_right, _up, _nose));
 
   const throttle = input.throttle || 0;
   const brake = input.brake || 0;
   const steer = input.steer || 0;
-  const targetPitch = clamp(-(vehicle.longG || (brake * 4 - throttle * 3)) * 0.016, -0.075, 0.06);
-  const targetRoll = clamp((vehicle.latG || -steer * 4) * 0.03, -0.09, 0.09);
+  const targetPitch = clamp(-(vehicle.longG || 0) * 0.016, -0.075, 0.06);
+  const targetRoll = clamp((vehicle.latG || 0) * 0.03, -0.09, 0.09);
   model.pitch = damp(model.pitch, targetPitch, 7, dt);
   model.roll = damp(model.roll, targetRoll, 7, dt);
   model.chassis.rotation.x = model.pitch;
