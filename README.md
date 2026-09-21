@@ -2,6 +2,12 @@
 
 A golden-hour circuit racer built with Three.js. Wet asphalt, a reflective lake, clearcoat bodywork, and a chase camera over three laps.
 
+## Play
+
+https://iluzionsx.github.io/rqcccing/
+
+Pushes to `main` build the static site and publish it with GitHub Pages.
+
 ## Run
 
 ```bash
