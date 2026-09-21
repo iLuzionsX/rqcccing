@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>RQCCCING</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect fill='%23111618' width='16' height='16'/%3E%3Cpath d='M2 12 L8 3 L14 12' fill='none' stroke='%23ffb15a' stroke-width='1.6'/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -49,8 +49,14 @@
     </section>
 
     <div id="touch">
-      <button id="left" type="button">L</button>
-      <button id="right" type="button">R</button>
+      <div id="wheel" role="slider" aria-label="Steering wheel" aria-valuemin="-1" aria-valuemax="1" aria-valuenow="0" aria-valuetext="Centered">
+        <div id="wheel-rotor">
+          <span class="spoke"></span>
+          <span class="spoke"></span>
+          <span class="spoke"></span>
+          <span class="hub"></span>
+        </div>
+      </div>
       <button id="brake" type="button">BRAKE</button>
       <button id="gas" type="button">GAS</button>
     </div>

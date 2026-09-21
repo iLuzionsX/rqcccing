@@ -15,6 +15,11 @@ html, body {
   background: #1a120e;
   font-family: Barlow, "Avenir Next", "Segoe UI", sans-serif;
   color: var(--ink);
+  touch-action: none;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 canvas {
@@ -214,11 +219,77 @@ button.drive:hover, #again:hover { background: rgba(255, 177, 90, 0.16); }
   display: none;
 }
 
-@media (pointer: coarse) {
-  #touch { display: block; }
-  #speed { font-size: 72px; }
-  #minimap { width: 120px; height: 120px; }
-  #gas, #brake, #left, #right {
+#wheel {
+  position: absolute;
+  left: calc(12px + env(safe-area-inset-left));
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  width: 148px;
+  height: 148px;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+#wheel-rotor {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 11px solid rgba(246, 243, 238, 0.82);
+  background: rgba(8, 10, 14, 0.38);
+  box-shadow: inset 0 0 0 2px rgba(255, 177, 90, 0.55), 0 10px 28px rgba(0, 0, 0, 0.35);
+  position: relative;
+}
+
+#wheel-rotor::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  width: 16px;
+  height: 7px;
+  margin-left: -8px;
+  border-radius: 2px;
+  background: var(--gold);
+}
+
+.spoke {
+  position: absolute;
+  left: 50%;
+  top: 16%;
+  width: 7px;
+  height: 34%;
+  margin-left: -3.5px;
+  border-radius: 4px;
+  background: rgba(246, 243, 238, 0.84);
+  transform-origin: center 100%;
+}
+
+.spoke:nth-child(2) { transform: rotate(120deg); }
+.spoke:nth-child(3) { transform: rotate(240deg); }
+
+.hub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border-radius: 50%;
+  background: #16181d;
+  border: 2px solid var(--gold);
+}
+
+@media (pointer: coarse), (hover: none) {
+  body.driving #touch { display: block; }
+  #speed { font-size: 58px; }
+  #speed-wrap { bottom: calc(172px + env(safe-area-inset-bottom)); left: calc(16px + env(safe-area-inset-left)); }
+  #minimap {
+    top: 78px;
+    right: calc(12px + env(safe-area-inset-right));
+    bottom: auto;
+    width: 104px;
+    height: 104px;
+  }
+  #gas, #brake {
     pointer-events: auto;
     position: absolute;
     border: 1px solid rgba(255,255,255,0.35);
@@ -228,11 +299,19 @@ button.drive:hover, #again:hover { background: rgba(255, 177, 90, 0.16); }
     letter-spacing: 0.14em;
     border-radius: 999px;
     backdrop-filter: blur(8px);
+    bottom: calc(22px + env(safe-area-inset-bottom));
+    width: 86px;
+    height: 86px;
+    touch-action: none;
   }
-  #gas, #brake { bottom: 28px; width: 92px; height: 92px; }
-  #gas { right: 28px; }
-  #brake { right: 132px; }
-  #left, #right { bottom: 36px; width: 74px; height: 74px; }
-  #left { left: 24px; }
-  #right { left: 108px; }
+  #gas { right: calc(16px + env(safe-area-inset-right)); }
+  #brake { right: calc(112px + env(safe-area-inset-right)); }
+}
+
+@media ((pointer: coarse) or (hover: none)) and (max-height: 480px) {
+  #wheel { width: 112px; height: 112px; }
+  #speed { font-size: 46px; }
+  #speed-wrap { bottom: calc(132px + env(safe-area-inset-bottom)); }
+  #gas, #brake { width: 72px; height: 72px; }
+  #brake { right: calc(96px + env(safe-area-inset-right)); }
 }
