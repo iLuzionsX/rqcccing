@@ -67,12 +67,13 @@ function aiInput(car, cars, circuit) {
 
   const near = circuit.atDistance(car.distance + 8 + speed * 0.28);
   const curvature = Math.max(Math.abs(ahead.curvature || 0), Math.abs(near.curvature || 0));
-  let target = 62;
-  if (curvature > 0.12) target = 22;
-  else if (curvature > 0.06) target = 30;
-  else if (curvature > 0.03) target = 40;
-  else if (curvature > 0.014) target = 50;
-  if (Math.abs(sample.lateral) > 4.4) target = Math.min(target, 28);
+  const ridge = circuit.stageId === 'ridge';
+  let target = ridge ? 48 : 62;
+  if (curvature > 0.12) target = ridge ? 16 : 22;
+  else if (curvature > 0.06) target = ridge ? 22 : 30;
+  else if (curvature > 0.03) target = ridge ? 29 : 40;
+  else if (curvature > 0.014) target = ridge ? 38 : 50;
+  if (Math.abs(sample.lateral) > 4.4) target = Math.min(target, ridge ? 21 : 28);
   if (blocked) target = Math.min(target, 36);
 
   let throttle = 0.94 * car.skill;
