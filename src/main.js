@@ -374,6 +374,10 @@ function bindInput() {
       player.vz = Math.cos(player.heading) * player.speed;
       player.yawRate = 0;
       player.slip = 0;
+      player.airborne = false;
+      player.airY = sample.height + 0.02;
+      player.airVelocity = 0;
+      player.bumpImpulse = 0;
       player.compass = orientCompass(player.heading, sample.up);
     }
   });
