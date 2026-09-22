@@ -35,7 +35,7 @@ export async function loadGameAssets(renderer) {
   const gltfLoader = new GLTFLoader();
   const rgbe = new RGBELoader();
 
-  const [hdr, asphalt, gravel, grass, tree, shrubA, shrubB, grassPatch, rock, boulder, flower, hatchback, sedan, suv] = await Promise.all([
+  const [hdr, asphalt, gravel, grass, tree, shrubA, shrubB, grassPatch, rock, boulder, flower] = await Promise.all([
     rgbe.loadAsync(assetUrl('hdri/kiara_1_dawn_2k.hdr')),
     loadMapSet(textures, 'asphalt', anisotropy, [['map', 'diff', true], ['normalMap', 'nor', false], ['roughnessMap', 'rough', false], ['aoMap', 'ao', false]]),
     loadMapSet(textures, 'gravel', anisotropy, [['map', 'diff', true], ['normalMap', 'nor', false], ['roughnessMap', 'rough', false]]),
@@ -47,9 +47,6 @@ export async function loadGameAssets(renderer) {
     gltfLoader.loadAsync(assetUrl('models/rock/rock_09_1k.gltf')),
     gltfLoader.loadAsync(assetUrl('models/boulder/boulder_01_1k.gltf')),
     gltfLoader.loadAsync(assetUrl('models/flower/flower_gazania_1k.gltf')),
-    gltfLoader.loadAsync(assetUrl('models/cars/hatchback-sports.glb')),
-    gltfLoader.loadAsync(assetUrl('models/cars/sedan-sports.glb')),
-    gltfLoader.loadAsync(assetUrl('models/cars/suv.glb')),
   ]);
 
   hdr.mapping = THREE.EquirectangularReflectionMapping;
@@ -58,19 +55,11 @@ export async function loadGameAssets(renderer) {
   grass.roughnessMap.repeat.set(80, 80);
   grass.aoMap.repeat.set(80, 80);
 
-  for (const car of [hatchback, sedan, suv]) {
-    car.scene.traverse((child) => {
-      const map = child.material && child.material.map;
-      if (map) map.anisotropy = anisotropy;
-    });
-  }
-
   return {
     hdr,
     asphalt,
     gravel,
     grass,
     props: { tree, shrubA, shrubB, grassPatch, rock, boulder, flower },
-    cars: { hatchback, sedan, suv },
   };
 }
