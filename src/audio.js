@@ -60,11 +60,11 @@ export function createAudio() {
       const bands = [0, 42, 78, 118, 158, 205, 280];
       const index = Math.min(6, Math.max(1, gear));
       const local = Math.min(1, Math.max(0, (kmh - bands[index - 1]) / (bands[index] - bands[index - 1])));
-      const freq = 52 + local * 128 + (index - 1) * 6;
-      engine.frequency.setTargetAtTime(freq, now, 0.045);
-      engine2.frequency.setTargetAtTime(freq * 0.5, now, 0.05);
-      filter.frequency.setTargetAtTime(260 + local * 1900 + throttle * 900, now, 0.05);
-      gain.gain.setTargetAtTime(0.016 + throttle * 0.034 + local * 0.012, now, 0.05);
+      const freq = 44 + local * 96 + (index - 1) * 5;
+      engine.frequency.setTargetAtTime(freq, now, 0.12);
+      engine2.frequency.setTargetAtTime(freq * 0.5, now, 0.12);
+      filter.frequency.setTargetAtTime(220 + local * 1500 + throttle * 700, now, 0.09);
+      gain.gain.setTargetAtTime(0.018 + throttle * 0.03 + local * 0.01, now, 0.08);
       const rpm = Math.min(1, kmh / 250);
       windGain.gain.setTargetAtTime(Math.min(0.045, rpm * rpm * 0.055), now, 0.1);
       windFilter.frequency.setTargetAtTime(280 + rpm * 1900, now, 0.1);
