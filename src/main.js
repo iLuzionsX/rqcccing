@@ -24,9 +24,13 @@ const quality = detectQuality();
 
 const hud = {
   title: document.querySelector('#title'),
+  hud: document.querySelector('#hud'),
   speed: document.querySelector('#speed'),
+  speedFill: document.querySelector('#speed-fill'),
+  speedMeter: document.querySelector('#speed-meter'),
   gear: document.querySelector('#gear'),
   lap: document.querySelector('#lap'),
+  lapCurrent: document.querySelector('#lap-current'),
   place: document.querySelector('#place'),
   time: document.querySelector('#time'),
   best: document.querySelector('#best'),
@@ -34,8 +38,25 @@ const hud = {
   warning: document.querySelector('#warning'),
   results: document.querySelector('#results'),
   resultBody: document.querySelector('#result-body'),
+  finishPlace: document.querySelector('#finish-place'),
+  finishTime: document.querySelector('#finish-time'),
+  pause: document.querySelector('#pause'),
+  pauseToggle: document.querySelector('#pause-toggle'),
+  resume: document.querySelector('#resume'),
+  restart: document.querySelector('#restart-stage'),
+  backMenu: document.querySelector('#back-menu'),
+  resultsMenu: document.querySelector('#results-menu'),
+  cameraToggle: document.querySelector('#camera-toggle'),
+  cameraMode: document.querySelector('#camera-mode'),
   minimap: document.querySelector('#minimap'),
   start: document.querySelector('#start'),
+  startLabel: document.querySelector('#start-label'),
+  loadStatus: document.querySelector('#load-status'),
+  stageDistance: document.querySelector('#stage-distance'),
+  carName: document.querySelector('#car-name'),
+  carIndex: document.querySelector('#car-index'),
+  carPrev: document.querySelector('#car-prev'),
+  carNext: document.querySelector('#car-next'),
   again: document.querySelector('#again'),
 };
 
@@ -59,6 +80,10 @@ const race = createRace(circuit);
 let models = [];
 const post = createComposer(renderer, scene, camera, quality);
 let audio = null;
+let rallyAssets = null;
+let selectedCarIndex = 0;
+const rallyModelsByName = new Map();
+let carNamesByDriver = [];
 
 const keys = new Set();
 const touch = { steer: 0, gas: false, brake: false };
@@ -79,23 +104,34 @@ let titleAngle = 0.4;
 
 bindInput();
 hud.start.disabled = true;
-hud.start.textContent = 'Loading';
+hud.startLabel.textContent = 'Loading car and stage';
+hud.start.setAttribute('aria-busy', 'true');
+hud.stageDistance.textContent = `${(circuit.length / 1000).toFixed(2)} KM`;
+updateCarSelection();
 hud.start.addEventListener('click', () => begin());
 hud.again.addEventListener('click', () => begin(true));
+hud.carPrev.addEventListener('click', () => selectCar(-1));
+hud.carNext.addEventListener('click', () => selectCar(1));
+hud.pauseToggle.addEventListener('click', () => setPaused(true));
+hud.resume.addEventListener('click', () => setPaused(false));
+hud.restart.addEventListener('click', () => begin(true));
+hud.backMenu.addEventListener('click', returnToMenu);
+hud.resultsMenu.addEventListener('click', returnToMenu);
+hud.cameraToggle.addEventListener('click', cycleCamera);
+setCameraLabel();
 window.addEventListener('resize', resize);
 
 const clock = new THREE.Clock();
 loadGameAssets(renderer).then((assets) => {
-  models = race.cars.map((_, index) => {
-    const model = createCar(assets.rally, RALLY_CARS[index]);
-    scene.add(model.root);
-    return model;
-  });
+  rallyAssets = assets.rally;
+  rebuildCarModels();
   lighting = createLighting(scene, renderer, assets.hdr);
   track = createTrack(scene, circuit, assets);
   environment = createEnvironment(scene, circuit, quality, assets);
   hud.start.disabled = false;
-  hud.start.textContent = 'Drive';
+  hud.startLabel.textContent = 'Start stage';
+  hud.start.setAttribute('aria-busy', 'false');
+  hud.loadStatus.textContent = 'Stage ready';
   if (params.get('autostart') === '1') {
     begin();
     if (params.get('skipintro') === '1') {
@@ -117,7 +153,9 @@ loadGameAssets(renderer).then((assets) => {
   });
 }).catch((error) => {
   console.error(error);
-  hud.start.textContent = 'Load failed';
+  hud.startLabel.textContent = 'Unable to load stage';
+  hud.start.setAttribute('aria-busy', 'false');
+  hud.loadStatus.textContent = 'Stage failed to load';
 });
 
 function step(dt) {
@@ -168,12 +206,100 @@ function begin(resetRace = false) {
   }
   beepState = -1;
   paused = false;
+  clearDriveInput();
+  document.body.classList.remove('paused');
   hud.title.classList.add('hidden');
+  hud.pause.classList.add('hidden');
   hud.results.classList.add('hidden');
-  hud.results.querySelector('#result-body').innerHTML = '';
-  document.querySelector('#hud').classList.remove('hidden');
+  hud.resultBody.innerHTML = '';
+  hud.hud.classList.remove('hidden');
   document.body.classList.add('driving');
   cameraMode = 'chase';
+  setCameraLabel();
+}
+
+function selectCar(direction) {
+  selectedCarIndex = (selectedCarIndex + direction + RALLY_CARS.length) % RALLY_CARS.length;
+  updateCarSelection();
+  if (rallyAssets) moveSelectedCarToPlayer();
+}
+
+function updateCarSelection() {
+  hud.carName.textContent = RALLY_CARS[selectedCarIndex].toUpperCase();
+  hud.carIndex.textContent = `${String(selectedCarIndex + 1).padStart(2, '0')} / ${String(RALLY_CARS.length).padStart(2, '0')}`;
+}
+
+function rebuildCarModels() {
+  models.forEach((model) => scene.remove(model.root));
+  rallyModelsByName.clear();
+  carNamesByDriver = [];
+  models = race.cars.map((_, index) => {
+    const carName = RALLY_CARS[index];
+    const model = createCar(rallyAssets, carName);
+    scene.add(model.root);
+    rallyModelsByName.set(carName, model);
+    carNamesByDriver.push(carName);
+    return model;
+  });
+  moveSelectedCarToPlayer();
+}
+
+function moveSelectedCarToPlayer() {
+  const carName = RALLY_CARS[selectedCarIndex];
+  const currentSlot = models.indexOf(rallyModelsByName.get(carName));
+  if (currentSlot <= 0) return;
+  [models[0], models[currentSlot]] = [models[currentSlot], models[0]];
+  [carNamesByDriver[0], carNamesByDriver[currentSlot]] = [carNamesByDriver[currentSlot], carNamesByDriver[0]];
+}
+
+function cycleCamera() {
+  const modes = ['chase', 'bumper', 'hood'];
+  const current = modes.indexOf(cameraMode);
+  cameraMode = modes[(current + 1 + modes.length) % modes.length];
+  setCameraLabel();
+}
+
+function setCameraLabel() {
+  hud.cameraMode.textContent = `${cameraMode.toUpperCase()} · C`;
+}
+
+function setPaused(nextPaused) {
+  if (race.phase !== 'race' && race.phase !== 'countdown') return;
+  paused = nextPaused;
+  clearDriveInput();
+  hud.pause.classList.toggle('hidden', !paused);
+  document.body.classList.toggle('paused', paused);
+  hud.pauseToggle.setAttribute('aria-label', paused ? 'Race paused' : 'Pause race');
+  if (paused) audio?.update(0, 0, race.cars[0].gear || 1, 0);
+}
+
+function clearDriveInput() {
+  keys.clear();
+  touch.steer = 0;
+  touch.gas = false;
+  touch.brake = false;
+  wheelState.held = false;
+}
+
+function returnToMenu() {
+  const fresh = createRace(circuit);
+  race.cars.forEach((car, index) => Object.assign(car, fresh.cars[index]));
+  race.phase = 'title';
+  race.countdown = 3.4;
+  race.elapsed = 0;
+  race.finishedOrder = [];
+  paused = false;
+  beepState = -1;
+  clearDriveInput();
+  audio?.update(0, 0, 1, 0);
+  document.body.classList.remove('driving', 'paused');
+  hud.title.classList.remove('hidden');
+  hud.hud.classList.add('hidden');
+  hud.pause.classList.add('hidden');
+  hud.results.classList.add('hidden');
+  hud.resultBody.innerHTML = '';
+  cameraMode = 'title';
+  setCameraLabel();
 }
 
 function updateCountdownAudio() {
@@ -300,14 +426,17 @@ function updateHud() {
   const player = race.cars[0];
   const kmh = Math.max(0, player.speed) * 3.6;
   hud.speed.textContent = String(Math.round(kmh));
+  hud.speedFill.style.width = `${Math.min(kmh / 280, 1) * 100}%`;
+  hud.speedMeter.setAttribute('aria-valuenow', String(Math.min(280, Math.round(kmh))));
   hud.gear.textContent = Math.abs(player.speed) < 0.7 ? 'N' : String(player.gear || 1);
-  hud.lap.textContent = `${Math.min(player.completed + 1, 3)} / 3`;
+  hud.lapCurrent.textContent = String(Math.min(player.completed + 1, 3));
   const order = raceStandings(race);
   const place = order.findIndex((entry) => entry.index === 0) + 1;
-  hud.place.textContent = ordinal(place);
+  hud.place.textContent = ordinal(place).toUpperCase();
   hud.time.textContent = formatTime(race.phase === 'finish' ? player.finishTime : race.elapsed);
   hud.best.textContent = formatTime(player.bestLap);
   hud.warning.classList.toggle('hidden', player.wrongWay < 0.35 || race.phase !== 'race');
+  hud.pauseToggle.classList.toggle('hidden', race.phase === 'finish');
   if (race.phase === 'countdown') {
     const n = Math.ceil(race.countdown);
     hud.countdown.textContent = n > 0 ? String(n) : '';
@@ -328,11 +457,24 @@ function showResults(order) {
   if (!hud.results.classList.contains('hidden') && hud.resultBody.childElementCount) return;
   hud.results.classList.remove('hidden');
   hud.resultBody.innerHTML = '';
+  const playerPlace = order.findIndex((entry) => entry.index === 0) + 1;
+  hud.finishPlace.textContent = ordinal(playerPlace).toUpperCase();
+  hud.finishTime.textContent = formatTime(race.cars[0].finishTime);
   order.forEach((entry, index) => {
     const row = document.createElement('div');
-    const label = entry.index === 0 ? 'You' : `Car ${entry.index + 1}`;
+    row.className = `result-row${entry.index === 0 ? ' is-player' : ''}`;
+    const rank = document.createElement('span');
+    rank.className = 'result-rank';
+    rank.textContent = String(index + 1).padStart(2, '0');
+    const driver = document.createElement('span');
+    driver.className = 'result-driver';
+    const carName = carNamesByDriver[entry.index] || RALLY_CARS[entry.index];
+    driver.textContent = entry.index === 0 ? `YOU · ${carName}` : carName;
+    const laptime = document.createElement('span');
+    laptime.className = 'result-laptime';
     const time = entry.vehicle.finishTime ? formatTime(entry.vehicle.finishTime) : 'running';
-    row.textContent = `${index + 1}  ${label}  ${time}`;
+    laptime.textContent = time;
+    row.append(rank, driver, laptime);
     hud.resultBody.appendChild(row);
   });
 }
@@ -357,10 +499,9 @@ function bindInput() {
   window.addEventListener('keydown', (event) => {
     keys.add(event.key.toLowerCase());
     if (event.key === ' ') event.preventDefault();
-    if (event.key.toLowerCase() === 'c') {
-      cameraMode = cameraMode === 'chase' ? 'bumper' : cameraMode === 'bumper' ? 'hood' : 'chase';
-    }
-    if (event.key.toLowerCase() === 'p') paused = !paused;
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key) && race.phase !== 'title') event.preventDefault();
+    if (event.key.toLowerCase() === 'c' && !event.repeat && !paused && (race.phase === 'race' || race.phase === 'countdown')) cycleCamera();
+    if ((event.key.toLowerCase() === 'p' || event.key === 'Escape') && !event.repeat) setPaused(!paused);
     if (event.key.toLowerCase() === 'r' && race.phase === 'race') {
       const player = race.cars[0];
       const sample = circuit.atDistance(player.distance);
@@ -507,7 +648,7 @@ function setupMinimap(trackCircuit) {
 function drawMinimap(order) {
   const { ctx, mapX, mapZ, canvas } = minimap;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = 'rgba(10, 12, 16, 0.45)';
+  ctx.fillStyle = 'rgba(13, 16, 17, 0.3)';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.beginPath();
   circuit.samples.forEach((sample, index) => {
@@ -516,19 +657,19 @@ function drawMinimap(order) {
     if (index === 0) ctx.moveTo(x, z);
     else ctx.lineTo(x, z);
   });
-  ctx.strokeStyle = 'rgba(255, 214, 170, 0.85)';
+  ctx.strokeStyle = 'rgba(246, 242, 233, 0.76)';
   ctx.lineWidth = 3;
   ctx.stroke();
   const lake = circuit.lake;
   ctx.beginPath();
   ctx.ellipse(mapX(lake.x), mapZ(lake.z), 10, 8, 0, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(120, 170, 190, 0.45)';
+  ctx.fillStyle = 'rgba(100, 148, 166, 0.34)';
   ctx.fill();
   order.forEach((entry) => {
     const car = entry.vehicle;
     ctx.beginPath();
     ctx.arc(mapX(car.x), mapZ(car.z), entry.index === 0 ? 4.5 : 3, 0, Math.PI * 2);
-    ctx.fillStyle = entry.index === 0 ? '#1f5bff' : '#f4f1ea';
+    ctx.fillStyle = entry.index === 0 ? '#ffc17d' : 'rgba(246, 242, 233, 0.78)';
     ctx.fill();
   });
 }
