@@ -1,0 +1,3 @@
+This work is based on "Low Poly Rally Cars Pack" (https://sketchfab.com/3d-models/low-poly-rally-cars-pack-aa5eb26008474c88a04d0ea6a3c424a2) by MuhammadOkky (https://sketchfab.com/muhammad.oky2018) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+
+The pack is redistributed here from the Open Throttle mirror (https://github.com/Dechode/Open-Throttle), which includes the same license notice.
