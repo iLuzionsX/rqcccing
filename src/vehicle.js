@@ -18,6 +18,9 @@ const SHIFT_UP = [0, 13.5, 24.5, 36, 46, 55, 999];
 const GEAR_FORCE = [0, 11200, 9000, 6800, 5200, 4000, 3100];
 const ENGINE_BRAKE = [0, 2600, 1850, 1280, 860, 580, 420];
 const MU = { asphalt: 1.28, gravel: 0.7, grass: 0.44 };
+const TIRE_B = 10.5;
+const TIRE_C = 1.32;
+const TIRE_E = 0.88;
 
 export function createVehicle(kind) {
   return {
@@ -32,6 +35,8 @@ export function createVehicle(kind) {
     heading: 0,
     yawRate: 0,
     slip: 0,
+    tireSlipF: 0,
+    tireSlipR: 0,
     steerAngle: 0,
     aiSteer: 0,
     frontOmega: 0,
@@ -75,6 +80,8 @@ export function placeVehicle(vehicle, circuit, distance, lateral) {
   vehicle.vx = 0;
   vehicle.vz = 0;
   vehicle.yawRate = 0;
+  vehicle.tireSlipF = 0;
+  vehicle.tireSlipR = 0;
   vehicle.steerAngle = 0;
   vehicle.aiSteer = 0;
   vehicle.frontOmega = 0;
@@ -149,21 +156,30 @@ function substep(vehicle, circuit, h, input, length) {
   const surface = absLat > 6.6 ? 'grass' : (absLat > 5.9 || circuit.stageId === 'ridge') ? 'gravel' : 'asphalt';
   const muBase = vehicle.airborne ? 0.08 : MU[surface];
 
-  const maxSteer = 0.48 / (1 + speed * 0.036);
+  const maxSteer = 0.46 / (1 + speed * 0.048);
   const steerTarget = input.steer * maxSteer;
   vehicle.steerAngle += (steerTarget - vehicle.steerAngle) * (1 - Math.exp(-4.4 * h));
 
   const slipDen = Math.max(speed, 2.4);
-  const slipF = Math.atan2(vLat + vehicle.yawRate * LF, slipDen) - vehicle.steerAngle;
-  const slipR = Math.atan2(vLat - vehicle.yawRate * LR, slipDen);
+  const slipFTarget = Math.atan2(vLat + vehicle.yawRate * LF, slipDen) - vehicle.steerAngle;
+  const slipRTarget = Math.atan2(vLat - vehicle.yawRate * LR, slipDen);
+  // Tire force takes a short distance to build. Relaxation keeps fast steering
+  // reversals readable without adding a frame-rate-dependent steering delay.
+  const tireSpeed = Math.max(speed, 3);
+  const relaxF = 1 - Math.exp(-tireSpeed * h / 0.72);
+  const relaxR = 1 - Math.exp(-tireSpeed * h / 0.84);
+  vehicle.tireSlipF += (slipFTarget - vehicle.tireSlipF) * relaxF;
+  vehicle.tireSlipR += (slipRTarget - vehicle.tireSlipR) * relaxR;
+  const slipF = vehicle.tireSlipF;
+  const slipR = vehicle.tireSlipR;
   const longTransfer = clamp((vehicle.longG || 0) * CG_H / (G * WHEELBASE), -0.36, 0.36);
   const latTransfer = clamp(Math.abs(vehicle.latG || 0) * CG_H / (G * TRACK), 0, 0.5);
   const loadSense = 1 - latTransfer * 0.22;
   const loadF = MASS * G * (LR / WHEELBASE) * (1 - longTransfer);
   const loadR = MASS * G * (LF / WHEELBASE) * (1 + longTransfer);
   const counter = input.steer * vehicle.yawRate < -0.1 && Math.abs(vehicle.yawRate) > 0.2;
-  const muF = muBase * loadSense * 0.86 * (counter ? 1.08 : 1);
-  const muR = muBase * loadSense * 1.08 * (input.handbrake > 0.45 ? 0.34 : 1);
+  const muF = muBase * loadSense * 0.96 * (counter ? 1.04 : 1);
+  const muR = muBase * loadSense * 1.04 * (input.handbrake > 0.45 ? 0.34 : 1);
 
   const drive = wheelDrive(vehicle, input.throttle, vLong, input.brake);
   const brakeSign = Math.sign(vLong || 1);
@@ -203,12 +219,14 @@ function substep(vehicle, circuit, h, input, length) {
   const settled = clamp((0.1 - slipMag) / 0.1, 0, 1);
   const speedHold = clamp((speed - 12) / 24, 0, 1) * settled;
   vehicle.yawRate *= Math.exp(-(0.05 + speedHold * 0.55) * h);
-  // Past the tire peak the mass should come back straight once the wheel is released.
+  // Let a sustained slide develop under steering, then help the chassis settle
+  // when the driver lifts or countersteers instead of snapping it straight.
   const holding = input.steer * Math.sign(vehicle.yawRate || 0);
-  if (input.handbrake < 0.2 && slipMag > 0.24 && holding < 0.45) {
-    const assist = clamp((slipMag - 0.24) * 1.15, 0, 1);
-    vehicle.yawRate *= 1 - assist * 1.5 * h;
-    vLat *= 1 - assist * 2.1 * h;
+  const release = clamp((0.45 - holding) / 0.45, 0, 1);
+  const recovery = clamp((slipMag - 0.12) / 0.22, 0, 1) * release;
+  if (input.handbrake < 0.2) {
+    vehicle.yawRate *= Math.exp(-recovery * 2.2 * h);
+    vLat *= Math.exp(-recovery * 3 * h);
   }
 
   const slow = clamp((2.2 - Math.abs(vLong)) / 2.2, 0, 1);
@@ -363,10 +381,11 @@ function updateWheels(vehicle, dt, throttle, handbrake) {
 }
 
 function tireLat(slip, load, mu) {
-  const x = slip / 0.17;
-  const response = x / (1 + Math.abs(x));
-  const falloff = 1 / (1 + Math.max(0, Math.abs(slip) - 0.32) * 1.35);
-  return -response * mu * load * (0.7 + 0.3 * falloff);
+  const alpha = clamp(slip, -0.7, 0.7);
+  const x = TIRE_B * alpha;
+  const shape = Math.sin(TIRE_C * Math.atan(x - TIRE_E * (x - Math.atan(x))));
+  const falloff = 1 / (1 + Math.max(0, Math.abs(alpha) - 0.24) * 0.85);
+  return -shape * falloff * mu * load;
 }
 
 function frictionCircle(fx, fy, limit) {
