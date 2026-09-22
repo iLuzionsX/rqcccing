@@ -11,7 +11,14 @@ import { createRace, raceStandings } from './race.js';
 import { createComposer } from './post.js';
 import { createAudio } from './audio.js';
 
-const COLORS = [0x1f5bff, 0xf3f1ec, 0xd4a017, 0xc4271d, 0x17191d, 0x0e8f62];
+const RALLY_CARS = [
+  'Subaru Impreza',
+  'Lancia Delta',
+  'Audi Quattro',
+  'Peugeot 205',
+  'Toyota Celica',
+  'Ford Escort RS1800',
+];
 const params = new URLSearchParams(location.search);
 const quality = detectQuality();
 
@@ -80,7 +87,7 @@ window.addEventListener('resize', resize);
 const clock = new THREE.Clock();
 loadGameAssets(renderer).then((assets) => {
   models = race.cars.map((_, index) => {
-    const model = createCar(COLORS[index], index + 1);
+    const model = createCar(assets.rally, RALLY_CARS[index]);
     scene.add(model.root);
     return model;
   });

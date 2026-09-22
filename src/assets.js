@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { prepareRallyMaterials } from './car.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
 const base = import.meta.env.BASE_URL;
@@ -35,7 +36,7 @@ export async function loadGameAssets(renderer) {
   const gltfLoader = new GLTFLoader();
   const rgbe = new RGBELoader();
 
-  const [hdr, asphalt, gravel, grass, tree, shrubA, shrubB, grassPatch, rock, boulder, flower] = await Promise.all([
+  const [hdr, asphalt, gravel, grass, tree, shrubA, shrubB, grassPatch, rock, boulder, flower, rally] = await Promise.all([
     rgbe.loadAsync(assetUrl('hdri/kiara_1_dawn_2k.hdr')),
     loadMapSet(textures, 'asphalt', anisotropy, [['map', 'diff', true], ['normalMap', 'nor', false], ['roughnessMap', 'rough', false], ['aoMap', 'ao', false]]),
     loadMapSet(textures, 'gravel', anisotropy, [['map', 'diff', true], ['normalMap', 'nor', false], ['roughnessMap', 'rough', false]]),
@@ -47,6 +48,7 @@ export async function loadGameAssets(renderer) {
     gltfLoader.loadAsync(assetUrl('models/rock/rock_09_1k.gltf')),
     gltfLoader.loadAsync(assetUrl('models/boulder/boulder_01_1k.gltf')),
     gltfLoader.loadAsync(assetUrl('models/flower/flower_gazania_1k.gltf')),
+    gltfLoader.loadAsync(assetUrl('models/rally/scene.gltf')),
   ]);
 
   hdr.mapping = THREE.EquirectangularReflectionMapping;
@@ -54,6 +56,7 @@ export async function loadGameAssets(renderer) {
   grass.normalMap.repeat.set(80, 80);
   grass.roughnessMap.repeat.set(80, 80);
   grass.aoMap.repeat.set(80, 80);
+  prepareRallyMaterials(rally);
 
   return {
     hdr,
@@ -61,5 +64,6 @@ export async function loadGameAssets(renderer) {
     gravel,
     grass,
     props: { tree, shrubA, shrubB, grassPatch, rock, boulder, flower },
+    rally,
   };
 }
