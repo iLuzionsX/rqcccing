@@ -120,10 +120,10 @@ export function syncCar(model, vehicle, sample, dt, input) {
   const throttle = input.throttle || 0;
   const brake = input.brake || 0;
   const steer = input.steer || 0;
-  const targetPitch = clamp(-(vehicle.longG || 0) * 0.016, -0.075, 0.06);
-  const targetRoll = clamp((vehicle.latG || 0) * 0.03, -0.09, 0.09);
-  model.pitch = damp(model.pitch, targetPitch, 7, dt);
-  model.roll = damp(model.roll, targetRoll, 7, dt);
+  const targetPitch = clamp(-(vehicle.longG || 0) * 0.026, -0.11, 0.09);
+  const targetRoll = clamp((vehicle.latG || 0) * 0.04, -0.14, 0.14);
+  model.pitch = damp(model.pitch, targetPitch, 3.1, dt);
+  model.roll = damp(model.roll, targetRoll, 2.7, dt);
   model.chassis.rotation.x = model.pitch;
   model.chassis.rotation.z = model.roll;
 
@@ -133,7 +133,7 @@ export function syncCar(model, vehicle, sample, dt, input) {
     vehicle.bumpImpulse = 0;
   }
   if (curb) model.bumpVel += 9 * dt;
-  model.bumpVel += (-model.bump * 90 - model.bumpVel * 9) * dt;
+  model.bumpVel += (-model.bump * 52 - model.bumpVel * 6.5) * dt;
   model.bump += model.bumpVel * dt;
   model.root.position.y += model.bump * 0.018;
 

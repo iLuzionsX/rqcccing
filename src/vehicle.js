@@ -1,16 +1,23 @@
-import { clamp, wrapPi } from './util.js';
+import { clamp, damp, wrapPi } from './util.js';
 import { orientCompass } from './compass.js';
 
-const MASS = 1280;
-const INERTIA = 1750;
-const LF = 1.22;
-const LR = 1.4;
+// A Group A rally car: the mass has to be persuaded to yaw, stop, and climb.
+const MASS = 1420;
+const INERTIA = 2920;
+const LF = 1.28;
+const LR = 1.48;
 const WHEELBASE = LF + LR;
-const MAX_SPEED = 76;
+const CG_H = 0.56;
+const TRACK = 1.52;
+const MAX_SPEED = 63;
 const WALL = 7.55;
 const STEP = 1 / 120;
+const G = 9.81;
 
-const SHIFT_UP = [0, 16, 28, 41, 53, 64, 999];
+const SHIFT_UP = [0, 13.5, 24.5, 36, 46, 55, 999];
+const GEAR_FORCE = [0, 11200, 9000, 6800, 5200, 4000, 3100];
+const ENGINE_BRAKE = [0, 2600, 1850, 1280, 860, 580, 420];
+const MU = { asphalt: 1.28, gravel: 0.7, grass: 0.44 };
 
 export function createVehicle(kind) {
   return {
@@ -26,10 +33,13 @@ export function createVehicle(kind) {
     yawRate: 0,
     slip: 0,
     steerAngle: 0,
+    aiSteer: 0,
     frontOmega: 0,
     rearOmega: 0,
     gear: 1,
     shiftTimer: 0,
+    engine: 0,
+    brakePressure: 0,
     longG: 0,
     latG: 0,
     longAccel: 0,
@@ -66,10 +76,13 @@ export function placeVehicle(vehicle, circuit, distance, lateral) {
   vehicle.vz = 0;
   vehicle.yawRate = 0;
   vehicle.steerAngle = 0;
+  vehicle.aiSteer = 0;
   vehicle.frontOmega = 0;
   vehicle.rearOmega = 0;
   vehicle.gear = 1;
   vehicle.shiftTimer = 0;
+  vehicle.engine = 0;
+  vehicle.brakePressure = 0;
   vehicle.longG = 0;
   vehicle.latG = 0;
   vehicle.longAccel = 0;
@@ -87,25 +100,34 @@ export function updateVehicle(vehicle, circuit, dt, input, length) {
   const brake = clamp(input.brake || 0, 0, 1);
   const handbrake = clamp(input.handbrake || 0, 0, 1);
   const steer = clamp(input.steer || 0, -1, 1);
+  // Torque builds slower than it falls: the engine and driveline have inertia.
+  vehicle.engine = damp(vehicle.engine, throttle, throttle > vehicle.engine ? 4.4 : 6.8, dt);
+  vehicle.brakePressure = damp(vehicle.brakePressure, brake, 9, dt);
   updateGear(vehicle, dt);
 
   const steps = clamp(Math.ceil(dt / STEP), 1, 8);
   const h = dt / steps;
+  const courseLength = length || circuit.length;
   for (let i = 0; i < steps; i += 1) {
-    substep(vehicle, circuit, h, { throttle, brake, handbrake, steer }, length);
+    substep(vehicle, circuit, h, {
+      throttle: vehicle.engine,
+      brake: vehicle.brakePressure,
+      handbrake,
+      steer,
+    }, courseLength);
   }
   updateWheels(vehicle, dt, throttle, handbrake);
 
   const previousDistance = vehicle.distance;
   const updated = circuit.query(vehicle.x, vehicle.z);
-  const delta = forwardDelta(previousDistance, updated.distance, length);
+  const delta = forwardDelta(previousDistance, updated.distance, courseLength);
   vehicle.distance = updated.distance;
   if (delta > 0) vehicle.sinceLine += delta;
   vehicle.wrongWay = delta < -0.35 && vehicle.speed > 6 ? vehicle.wrongWay + dt : 0;
-  const wrapped = previousDistance > length * 0.72 && updated.distance < length * 0.22;
+  const wrapped = previousDistance > courseLength * 0.72 && updated.distance < courseLength * 0.22;
   if (!vehicle.finished) {
     vehicle.lapTime += dt;
-    if (wrapped && delta > 0 && vehicle.sinceLine > length * 0.45) {
+    if (wrapped && delta > 0 && vehicle.sinceLine > courseLength * 0.45) {
       vehicle.completed += 1;
       vehicle.lastLap = vehicle.lapTime;
       vehicle.bestLap = vehicle.bestLap == null ? vehicle.lapTime : Math.min(vehicle.bestLap, vehicle.lapTime);
@@ -123,83 +145,97 @@ function substep(vehicle, circuit, h, input, length) {
   let vLong = vehicle.vLong;
   let vLat = vehicle.vLat;
   const absLat = Math.abs(sample.lateral);
-  const surface = absLat > 6.6 ? 'grass' : absLat > 5.9 || circuit.stageId === 'ridge' ? 'gravel' : 'asphalt';
-  const muBase = vehicle.airborne ? 0.08 : surface === 'grass' ? 0.52 : surface === 'gravel' ? 0.8 : 1.68;
+  const speed = Math.abs(vLong);
+  const surface = absLat > 6.6 ? 'grass' : (absLat > 5.9 || circuit.stageId === 'ridge') ? 'gravel' : 'asphalt';
+  const muBase = vehicle.airborne ? 0.08 : MU[surface];
 
-  const steerAngle = input.steer * (0.5 / (1 + Math.abs(vLong) * 0.01));
-  vehicle.steerAngle += (steerAngle - vehicle.steerAngle) * (1 - Math.exp(-14 * h));
+  const maxSteer = 0.48 / (1 + speed * 0.036);
+  const steerTarget = input.steer * maxSteer;
+  vehicle.steerAngle += (steerTarget - vehicle.steerAngle) * (1 - Math.exp(-4.4 * h));
 
-  const slipF = Math.atan2(vLat + vehicle.yawRate * LF, Math.max(Math.abs(vLong), 2.2)) - vehicle.steerAngle;
-  const slipR = Math.atan2(vLat - vehicle.yawRate * LR, Math.max(Math.abs(vLong), 2.2));
-  const transfer = clamp((vehicle.longG || 0) / 12, -0.34, 0.34);
-  const loadF = MASS * 9.81 * (LR / WHEELBASE) * (1 - transfer);
-  const loadR = MASS * 9.81 * (LF / WHEELBASE) * (1 + transfer);
-  const counter = input.steer * vehicle.yawRate < -0.18;
-  const muF = muBase * (counter ? 1.16 : 1);
-  const muR = muBase * (input.handbrake > 0.45 ? 0.5 : 1);
+  const slipDen = Math.max(speed, 2.4);
+  const slipF = Math.atan2(vLat + vehicle.yawRate * LF, slipDen) - vehicle.steerAngle;
+  const slipR = Math.atan2(vLat - vehicle.yawRate * LR, slipDen);
+  const longTransfer = clamp((vehicle.longG || 0) * CG_H / (G * WHEELBASE), -0.36, 0.36);
+  const latTransfer = clamp(Math.abs(vehicle.latG || 0) * CG_H / (G * TRACK), 0, 0.5);
+  const loadSense = 1 - latTransfer * 0.22;
+  const loadF = MASS * G * (LR / WHEELBASE) * (1 - longTransfer);
+  const loadR = MASS * G * (LF / WHEELBASE) * (1 + longTransfer);
+  const counter = input.steer * vehicle.yawRate < -0.1 && Math.abs(vehicle.yawRate) > 0.2;
+  const muF = muBase * loadSense * 0.86 * (counter ? 1.08 : 1);
+  const muR = muBase * loadSense * 1.08 * (input.handbrake > 0.45 ? 0.34 : 1);
 
-  const ratio = clamp(Math.max(vLong, 0) / MAX_SPEED, 0, 1);
-  let drive = input.throttle * 13600 * (1 - ratio ** 1.45);
-  if (vehicle.shiftTimer > 0) drive *= 0.28;
-  if (vLong < 0.7 && input.brake > 0.55 && input.throttle < 0.15) drive = -3600 * input.brake;
-
-  let fxF = -Math.sign(vLong || 1) * input.brake * 7800;
-  let fxR = drive - Math.sign(vLong || 1) * (input.brake * 9200 + input.handbrake * 700);
+  const drive = wheelDrive(vehicle, input.throttle, vLong, input.brake);
+  const brakeSign = Math.sign(vLong || 1);
+  let fxF = -brakeSign * input.brake * 7400;
+  let fxR = drive - brakeSign * (input.brake * 4000 + input.handbrake * 1600);
   let fyF = tireLat(slipF, loadF, muF);
   let fyR = tireLat(slipR, loadR, muR);
   [fxF, fyF] = frictionCircle(fxF, fyF, muF * loadF);
   [fxR, fyR] = frictionCircle(fxR, fyR, muR * loadR);
 
-  let drag = 0.3 * vLong * Math.abs(vLong) + 16 * vLong;
-  if (input.throttle < 0.08 && vLong > 2) drag += 650 + 20 * vLong;
-  if (surface === 'grass') drag += 1.05 * vLong * Math.abs(vLong);
-  else if (surface === 'gravel') drag += 0.42 * vLong * Math.abs(vLong);
-  if (absLat > 5.55 && absLat < 6.75) drag += 0.28 * vLong * Math.abs(vLong);
+  let drag = 0.47 * vLong * Math.abs(vLong);
+  if (speed > 0.45) drag += Math.sign(vLong) * 0.016 * MASS * G;
+  if (input.throttle < 0.06 && speed > 1) {
+    drag += Math.sign(vLong) * ENGINE_BRAKE[vehicle.gear] * (1 - input.throttle / 0.06);
+  }
+  if (surface === 'grass') drag += 1.2 * vLong * Math.abs(vLong);
+  else if (surface === 'gravel') drag += 0.5 * vLong * Math.abs(vLong);
+  if (absLat > 5.55 && absLat < 6.75) drag += 0.36 * vLong * Math.abs(vLong);
 
-  const aLong = clamp((fxF + fxR - drag) / MASS, -30, 16);
-  const aLat = clamp((fyF + fyR) / MASS, -24, 24);
-  const yawAcc = clamp((fyF * LF - fyR * LR) / INERTIA, -7, 7);
-  vehicle.longG = aLong;
-  vehicle.latG = aLat;
+  const aProp = (fxF + fxR - drag) / MASS;
+  const frame = orientCompass(vehicle.heading, sample.up);
+  const grade = surfaceGravity(sample.up, frame);
+  const aLong = clamp(aProp + grade.long, -15, 8.5);
+  const aLatTires = (fyF + fyR) / MASS;
+  const aLat = clamp(aLatTires + grade.lat, -13, 13);
+  const yawAcc = clamp((fyF * LF - fyR * LR) / INERTIA, -4.2, 4.2);
+  vehicle.longG = aProp;
+  vehicle.latG = aLatTires;
   vehicle.slip = slipR;
-  vehicle.burning = input.throttle > 0.65 && drive > muR * loadR * 0.92 && vLong < 28;
+  vehicle.burning = input.throttle > 0.72 && drive > muR * loadR * 0.9 && speed < 16;
 
   vLong += (aLong + vLat * vehicle.yawRate) * h;
   vLat += (aLat - vLong * vehicle.yawRate) * h;
   vehicle.yawRate += yawAcc * h;
-  vehicle.yawRate *= Math.exp(-0.28 * h);
 
-  if (input.handbrake < 0.25 && Math.abs(slipR) > 0.4) {
-    const assist = clamp((Math.abs(slipR) - 0.4) * 1.6, 0, 1);
-    vLat *= 1 - assist * 4 * h;
-    vehicle.yawRate *= 1 - assist * 2.4 * h;
+  const slipMag = Math.max(Math.abs(slipF), Math.abs(slipR));
+  const settled = clamp((0.1 - slipMag) / 0.1, 0, 1);
+  const speedHold = clamp((speed - 12) / 24, 0, 1) * settled;
+  vehicle.yawRate *= Math.exp(-(0.05 + speedHold * 0.55) * h);
+  // Past the tire peak the mass should come back straight once the wheel is released.
+  const holding = input.steer * Math.sign(vehicle.yawRate || 0);
+  if (input.handbrake < 0.2 && slipMag > 0.24 && holding < 0.45) {
+    const assist = clamp((slipMag - 0.24) * 1.15, 0, 1);
+    vehicle.yawRate *= 1 - assist * 1.5 * h;
+    vLat *= 1 - assist * 2.1 * h;
   }
 
-  const slow = clamp((2.5 - Math.abs(vLong)) / 2.5, 0, 1);
-  if (slow > 0) {
+  const slow = clamp((2.2 - Math.abs(vLong)) / 2.2, 0, 1);
+  if (slow > 0 && input.handbrake < 0.3) {
     const kin = (vLong / WHEELBASE) * Math.tan(vehicle.steerAngle);
     vehicle.yawRate = vehicle.yawRate * (1 - slow) + kin * slow;
-    vLat *= 1 - slow * 0.82;
+    vLat *= 1 - slow * 0.7;
   }
 
-  if (Math.abs(vLong) < 0.12 && Math.abs(vLat) < 0.12 && input.throttle < 0.04 && input.brake < 0.04) {
+  if (Math.abs(vLong) < 0.2 && Math.abs(vLat) < 0.2 && input.throttle < 0.04 && input.brake < 0.04) {
     vLong = 0;
     vLat = 0;
-    vehicle.yawRate *= 0.4;
+    vehicle.yawRate *= 0.5;
   }
 
-  vLong = clamp(vLong, -10, 78);
-  vLat = clamp(vLat, -20, 20);
-  vehicle.yawRate = clamp(vehicle.yawRate, -3.1, 3.1);
+  vLong = clamp(vLong, -8, MAX_SPEED + 1);
+  vLat = clamp(vLat, -13, 13);
+  vehicle.yawRate = clamp(vehicle.yawRate, -2.15, 2.15);
   vehicle.vLong = vLong;
   vehicle.vLat = vLat;
   vehicle.speed = vLong;
   vehicle.heading = wrapPi(vehicle.heading + vehicle.yawRate * h);
 
-  const frame = orientCompass(vehicle.heading, sample.up);
-  vehicle.compass = frame;
-  vehicle.vx = frame.forward.x * vLong + frame.right.x * vLat;
-  vehicle.vz = frame.forward.z * vLong + frame.right.z * vLat;
+  const stepped = orientCompass(vehicle.heading, sample.up);
+  vehicle.compass = stepped;
+  vehicle.vx = stepped.forward.x * vLong + stepped.right.x * vLat;
+  vehicle.vz = stepped.forward.z * vLong + stepped.right.z * vLat;
   vehicle.x += vehicle.vx * h;
   vehicle.z += vehicle.vz * h;
   contain(vehicle, circuit);
@@ -236,6 +272,36 @@ function crossedDistance(from, to, marker, length) {
   const travelled = forwardDelta(from, to, length);
   const distanceToMarker = (marker - from + length) % length;
   return travelled > 0 && distanceToMarker > 1e-5 && distanceToMarker <= travelled + 1e-5;
+}
+
+function wheelDrive(vehicle, throttle, vLong, brake) {
+  if (vLong < 0.8 && brake > 0.55 && throttle < 0.12) return -3000 * brake;
+  const gear = vehicle.gear;
+  const low = SHIFT_UP[gear - 1];
+  const high = SHIFT_UP[gear];
+  const through = clamp((Math.max(vLong, 0) - low) / Math.max(6, high - low), 0, 1);
+  const shape = 0.8 + 0.2 * Math.sin(Math.min(through, 0.94) * Math.PI);
+  let force = throttle * GEAR_FORCE[gear] * shape;
+  if (vehicle.shiftTimer > 0) force *= 0.08;
+  const ratio = clamp(Math.max(vLong, 0) / MAX_SPEED, 0, 1);
+  force *= 1 - ratio ** 2 * 0.28;
+  return force;
+}
+
+function surfaceGravity(up, frame) {
+  const ux = up?.x || 0;
+  const uy = up?.y ?? 1;
+  const uz = up?.z || 0;
+  const ontoUp = -G * uy;
+  const gx = -ux * ontoUp;
+  const gy = -G - uy * ontoUp;
+  const gz = -uz * ontoUp;
+  const f = frame.forward;
+  const r = frame.right;
+  return {
+    long: gx * f.x + gy * f.y + gz * f.z,
+    lat: gx * r.x + gy * r.y + gz * r.z,
+  };
 }
 
 function contain(vehicle, circuit) {
@@ -278,10 +344,10 @@ function updateGear(vehicle, dt) {
   const speed = Math.max(vehicle.vLong, 0);
   if (vehicle.gear < 6 && speed > SHIFT_UP[vehicle.gear] && vehicle.shiftTimer <= 0) {
     vehicle.gear += 1;
-    vehicle.shiftTimer = 0.11;
-  } else if (vehicle.gear > 1 && speed < SHIFT_UP[vehicle.gear - 1] - 4) {
+    vehicle.shiftTimer = 0.22;
+  } else if (vehicle.gear > 1 && speed < SHIFT_UP[vehicle.gear - 1] - 3.5) {
     vehicle.gear -= 1;
-    vehicle.shiftTimer = 0.08;
+    vehicle.shiftTimer = 0.16;
   }
 }
 
@@ -289,18 +355,18 @@ function updateWheels(vehicle, dt, throttle, handbrake) {
   const radius = 0.33;
   const ground = vehicle.vLong / radius;
   const spin = vehicle.burning ? ground + throttle * 28 : ground;
-  const follow = 1 - Math.exp(-12 * dt);
+  const follow = 1 - Math.exp(-7 * dt);
   vehicle.frontOmega += (ground - vehicle.frontOmega) * follow;
   const rearTarget = handbrake > 0.45 ? 0 : spin;
-  const rearFollow = 1 - Math.exp(-(handbrake > 0.45 ? 22 : 9) * dt);
+  const rearFollow = 1 - Math.exp(-(handbrake > 0.45 ? 14 : 5) * dt);
   vehicle.rearOmega += (rearTarget - vehicle.rearOmega) * rearFollow;
 }
 
 function tireLat(slip, load, mu) {
-  const x = slip / 0.105;
+  const x = slip / 0.17;
   const response = x / (1 + Math.abs(x));
-  const falloff = 1 / (1 + Math.max(0, Math.abs(slip) - 0.16) * 2.4);
-  return -response * mu * load * (0.58 + 0.42 * falloff);
+  const falloff = 1 / (1 + Math.max(0, Math.abs(slip) - 0.32) * 1.35);
+  return -response * mu * load * (0.7 + 0.3 * falloff);
 }
 
 function frictionCircle(fx, fy, limit) {
