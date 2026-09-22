@@ -40,7 +40,6 @@ jobs:
       - name: Build
         run: npm run build
 
-      # Upload this build for the trusted main-branch preview workflow.
       - name: Upload PR build
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
@@ -59,8 +58,9 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # Marker pushes are combined with a PR build by pages-preview.yml.
       - name: Upload Pages artifact
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || github.event.inputs.preview_pr == '')
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || github.event.inputs.preview_pr == '') && !contains(github.event.head_commit.message, 'publish-preview-pr=')
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
@@ -129,7 +129,7 @@ jobs:
         uses: actions/deploy-pages@v4
 
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || github.event.inputs.preview_pr == '')
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || github.event.inputs.preview_pr == '') && !contains(github.event.head_commit.message, 'publish-preview-pr=')
     needs: build
     runs-on: ubuntu-latest
     permissions:
