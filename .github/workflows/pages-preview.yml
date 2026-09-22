@@ -1,0 +1,97 @@
+name: Deploy PR preview to GitHub Pages
+
+on:
+  workflow_run:
+    workflows: ["Deploy GitHub Pages"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-main:
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.pull_requests[0].number != null
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build main site
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: Upload main build
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-build
+          path: dist
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy-preview:
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.pull_requests[0].number != null
+    needs: build-main
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}previews/pr-${{ github.event.workflow_run.pull_requests[0].number }}/
+    steps:
+      - name: Download main build
+        uses: actions/download-artifact@v4
+        with:
+          name: main-build
+          path: main-build
+
+      - name: Download PR build
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-build
+          path: pr-build
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Combine main and preview builds
+        env:
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          mkdir -p "site/previews/pr-${PR_NUMBER}"
+          cp -R main-build/. site/
+          cp -R pr-build/. "site/previews/pr-${PR_NUMBER}/"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy preview to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

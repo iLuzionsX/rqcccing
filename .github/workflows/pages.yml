@@ -40,6 +40,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Upload PR build
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-build
+          path: dist
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Upload main build for preview
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.preview_pr != ''
         uses: actions/upload-artifact@v4
