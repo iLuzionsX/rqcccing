@@ -12,6 +12,7 @@ import { createComposer } from './post.js';
 import { createAudio } from './audio.js';
 
 const COLORS = [0x1f5bff, 0xf3f1ec, 0xd4a017, 0xc4271d, 0x17191d, 0x0e8f62];
+const CAR_ROSTER = ['hatchback', 'sedan', 'suv', 'hatchback', 'sedan', 'suv'];
 const params = new URLSearchParams(location.search);
 const quality = detectQuality();
 
@@ -49,11 +50,7 @@ let lighting;
 let track;
 let environment;
 const race = createRace(circuit);
-const models = race.cars.map((car, index) => {
-  const model = createCar(COLORS[index], index + 1);
-  scene.add(model.root);
-  return model;
-});
+let models = [];
 const post = createComposer(renderer, scene, camera, quality);
 let audio = null;
 
@@ -83,6 +80,11 @@ window.addEventListener('resize', resize);
 
 const clock = new THREE.Clock();
 loadGameAssets(renderer).then((assets) => {
+  models = race.cars.map((_, index) => {
+    const model = createCar(assets.cars[CAR_ROSTER[index]], COLORS[index], index + 1);
+    scene.add(model.root);
+    return model;
+  });
   lighting = createLighting(scene, renderer, assets.hdr);
   track = createTrack(scene, circuit, assets);
   environment = createEnvironment(scene, circuit, quality, assets);
@@ -227,12 +229,14 @@ function updateChaseCamera(dt, input) {
   const frame = player.compass || orientCompass(player.heading, sample.up);
   forward.set(frame.forward.x, frame.forward.y, frame.forward.z);
   const origin = models[0].root.position;
+  const nose = models[0].nose || 2;
+  const roof = models[0].roof || 1.1;
   if (cameraMode === 'bumper') {
-    desiredPos.copy(origin).addScaledVector(forward, 1.15).addScaledVector(sample.up, 0.95);
-    desiredLook.copy(origin).addScaledVector(forward, 14).addScaledVector(sample.up, 0.7);
+    desiredPos.copy(origin).addScaledVector(forward, nose + 0.45).addScaledVector(sample.up, 0.72);
+    desiredLook.copy(origin).addScaledVector(forward, nose + 12).addScaledVector(sample.up, 0.55);
   } else if (cameraMode === 'hood') {
-    desiredPos.copy(origin).addScaledVector(forward, 0.55).addScaledVector(sample.up, 0.72);
-    desiredLook.copy(origin).addScaledVector(forward, 16).addScaledVector(sample.up, 0.55);
+    desiredPos.copy(origin).addScaledVector(forward, nose * 0.42).addScaledVector(sample.up, roof * 0.62);
+    desiredLook.copy(origin).addScaledVector(forward, nose + 14).addScaledVector(sample.up, roof * 0.42);
   } else {
     const lat = player.latG || 0;
     const back = 6.7 + Math.min(Math.max(player.speed, 0), 55) * 0.04;
@@ -269,8 +273,8 @@ function applyShot() {
   camera.up.set(0, 1, 0);
   if (shot === 'car') {
     camera.position.set(player.x - fx * 6.5 + fz * 3.4, player.y + 1.7, player.z - fz * 6.5 - fx * 3.4);
-    camera.lookAt(player.x + fx * 0.4, player.y + 0.55, player.z + fz * 0.4);
-    camera.fov = 36;
+    camera.lookAt(player.x + fx * 0.4, player.y + 0.7, player.z + fz * 0.4);
+    camera.fov = 28;
   } else if (shot === 'beauty') {
     const lake = circuit.lake;
     const sample = circuit.atDistance(circuit.length * 0.18);
