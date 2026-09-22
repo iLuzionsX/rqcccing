@@ -64,8 +64,9 @@ export function createCar(gltf, carName) {
   chassis.add(content);
 
   content.updateMatrixWorld(true);
+  // Include the detached wheels before mounting them so tire bottoms sit on the track.
   const bounds = new THREE.Box3();
-  for (const part of bodyClones) bounds.expandByObject(part);
+  for (const part of [...bodyClones, ...wheelClones]) bounds.expandByObject(part);
   const center = bounds.getCenter(new THREE.Vector3());
   content.position.set(-center.x, -bounds.min.y, -center.z);
 

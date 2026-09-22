@@ -27,4 +27,4 @@ Open the local URL Vite prints. `npm run build` writes a static site to `dist/`.
 - R — recover onto the racing line
 - P — pause
 
-On a phone, use the on-screen pedals. The race is three laps. Finish position is frozen when you cross the line for the third time.
+On a phone, steer with the on-screen wheel and use the pedals. The race is three laps. Finish position is frozen when you cross the line for the third time.
