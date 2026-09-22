@@ -245,17 +245,17 @@ function updateChaseCamera(dt, input) {
     desiredLook.copy(origin).addScaledVector(forward, nose + 14).addScaledVector(sample.up, roof * 0.42);
   } else {
     const lat = player.latG || 0;
-    const back = 6.7 + Math.min(Math.max(player.speed, 0), 55) * 0.04;
-    const height = 2.05 + Math.min(Math.max(player.speed, 0), 55) * 0.012;
+    const back = 7.15 + Math.min(Math.max(player.speed, 0), 50) * 0.045;
+    const height = 2.15 + Math.min(Math.max(player.speed, 0), 50) * 0.014;
     desiredPos.copy(origin).addScaledVector(forward, -back).addScaledVector(sample.up, height);
     desiredPos.x += frame.right.x * clamp(lat, -8, 8) * 0.07;
     desiredPos.y += frame.right.y * clamp(lat, -8, 8) * 0.07;
     desiredPos.z += frame.right.z * clamp(lat, -8, 8) * 0.07;
     desiredLook.copy(origin).addScaledVector(forward, 9).addScaledVector(sample.up, 0.92);
   }
-  const follow = cameraMode === 'chase' ? 4.6 : 8;
+  const follow = cameraMode === 'chase' ? 3.15 : 5.8;
   camPos.lerp(desiredPos, 1 - Math.exp(-follow * dt));
-  camLook.lerp(desiredLook, 1 - Math.exp(-6.2 * dt));
+  camLook.lerp(desiredLook, 1 - Math.exp(-4.4 * dt));
   camera.position.copy(camPos);
   const roll = models[0].roll;
   const cos = Math.cos(roll);
@@ -292,7 +292,7 @@ function applyShot() {
 }
 
 function dampFov(target, dt) {
-  camera.fov += (target - camera.fov) * Math.min(1, dt * 2.5);
+  camera.fov += (target - camera.fov) * Math.min(1, dt * 1.35);
   camera.updateProjectionMatrix();
 }
 
