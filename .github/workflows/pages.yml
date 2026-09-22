@@ -37,11 +37,70 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Upload PR build
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-build
+          path: dist
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Upload Pages artifact
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
+
+  deploy-preview:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}previews/pr-${{ github.event.pull_request.number }}/
+    steps:
+      - name: Checkout main site
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: main/package-lock.json
+
+      - name: Build main site
+        working-directory: main
+        run: |
+          npm ci
+          npm run build
+
+      - name: Download PR build
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-build
+          path: pr-build
+
+      - name: Combine main and preview builds
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p "site/previews/pr-${PR_NUMBER}"
+          cp -R main/dist/. site/
+          cp -R pr-build/. "site/previews/pr-${PR_NUMBER}/"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy preview to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
