@@ -13,9 +13,23 @@ export function vergeDrop(lateral) {
   return VERGE_DROP * t;
 }
 
-export function naturalHeight(x, z, lake) {
+export function naturalHeight(x, z, lake, stageId = 'coast') {
   let h = fbm(x * 0.0042, z * 0.0042, 5) * 16 - 2.4;
   h += (fbm(x * 0.018, z * 0.018, 3) - 0.5) * 2.2;
+  if (stageId === 'ridge') {
+    h = fbm(x * 0.0028, z * 0.0028, 5) * 11 - 1.5;
+    h += (fbm(x * 0.014, z * 0.014, 3) - 0.5) * 3.4;
+    const massifs = [
+      [-28, 24, 43, 132],
+      [160, 70, 55, 124],
+      [-132, 103, 44, 115],
+      [38, -184, 30, 112],
+    ];
+    for (const [px, pz, height, radius] of massifs) {
+      const d = Math.hypot(x - px, z - pz) / radius;
+      h += height * Math.exp(-d * d * 1.35);
+    }
+  }
   const dl = Math.hypot(x - lake.x, z - lake.z);
   const shore = smoothstep(lake.radius + 34, lake.radius + 2, dl);
   const submerged = smoothstep(lake.radius + 2, lake.radius * 0.55, dl);
@@ -26,7 +40,7 @@ export function naturalHeight(x, z, lake) {
 
 // Visible ground: asphalt plane, gravel lip, then a bank that eases into the hills.
 export function surfaceHeight(x, z, circuit, sample = circuit.query(x, z)) {
-  const natural = naturalHeight(x, z, circuit.lake);
+  const natural = naturalHeight(x, z, circuit.lake, circuit.stageId);
   const abs = Math.abs(sample.lateral);
   const plane = sample.height;
   if (abs <= VERGE) return plane - vergeDrop(abs);
