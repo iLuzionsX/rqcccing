@@ -69,6 +69,39 @@ button, canvas { touch-action: none; }
   font-size: 16px;
 }
 
+.stage-picker {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: min(360px, 100%);
+  margin: -10px 0 26px;
+  pointer-events: auto;
+}
+
+.stage-picker label {
+  color: var(--gold);
+  font-family: Oswald, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+}
+
+#stage-select {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid rgba(255, 177, 90, 0.72);
+  border-radius: 0;
+  background: rgba(10, 12, 16, 0.78);
+  color: var(--ink);
+  font: 500 14px Barlow, "Avenir Next", "Segoe UI", sans-serif;
+  letter-spacing: 0.04em;
+  padding: 11px 13px;
+}
+
+#stage-select:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+
 button.drive, #again {
   pointer-events: auto;
   border: 1px solid var(--gold);

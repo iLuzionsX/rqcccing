@@ -65,12 +65,24 @@ function aiInput(car, cars, circuit, dt) {
   const rawSteer = clamp(diff * 2.6 - (car.yawRate || 0) * 0.2, -1, 1);
   car.aiSteer = damp(car.aiSteer || 0, rawSteer, 12, dt || 1 / 60);
 
+  const ridge = circuit.stageId === 'ridge';
   let kappa = 0;
   const brakeLook = 28 + speed * 1.7;
   for (let aheadOf = 10; aheadOf <= brakeLook; aheadOf += 14) {
     kappa = Math.max(kappa, pathCurvature(circuit, car.distance + aheadOf));
   }
   let target = kappa > 0.00045 ? clamp(Math.sqrt(4.3 / kappa), 18, 38) : 38;
+  if (ridge) {
+    const near = circuit.atDistance(car.distance + 8 + speed * 0.28);
+    const curvature = Math.max(Math.abs(aim.curvature || 0), Math.abs(near.curvature || 0));
+    let stageTarget = 48;
+    if (curvature > 0.12) stageTarget = 16;
+    else if (curvature > 0.06) stageTarget = 22;
+    else if (curvature > 0.03) stageTarget = 29;
+    else if (curvature > 0.014) stageTarget = 38;
+    target = Math.min(target, stageTarget);
+    if (Math.abs(sample.lateral) > 4.4) target = Math.min(target, 21);
+  }
   if ((aim.tangent?.y || 0) > 0.05) target -= 2;
   if (Math.abs(sample.lateral) > 5.2) target = Math.min(target, 16);
   if (blocked) target = Math.min(target, 20);

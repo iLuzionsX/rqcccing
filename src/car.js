@@ -115,7 +115,7 @@ export function syncCar(model, vehicle, sample, dt, input) {
   _up.set(frame.up.x, frame.up.y, frame.up.z);
   _basis.makeBasis(_right, _up, _nose);
   model.root.quaternion.setFromRotationMatrix(_basis);
-  model.root.position.set(vehicle.x, sample.height + 0.02, vehicle.z);
+  model.root.position.set(vehicle.x, vehicle.airborne ? vehicle.airY : sample.height + 0.02, vehicle.z);
 
   const throttle = input.throttle || 0;
   const brake = input.brake || 0;
@@ -128,6 +128,10 @@ export function syncCar(model, vehicle, sample, dt, input) {
   model.chassis.rotation.z = model.roll;
 
   const curb = Math.abs(sample.lateral) > 5.5 && Math.abs(sample.lateral) < 6.7 && Math.abs(vehicle.speed) > 10;
+  if (vehicle.bumpImpulse > 0) {
+    model.bumpVel += vehicle.bumpImpulse * 3;
+    vehicle.bumpImpulse = 0;
+  }
   if (curb) model.bumpVel += 9 * dt;
   model.bumpVel += (-model.bump * 52 - model.bumpVel * 6.5) * dt;
   model.bump += model.bumpVel * dt;

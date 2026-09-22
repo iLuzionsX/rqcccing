@@ -45,6 +45,10 @@ export function createVehicle(kind) {
     longAccel: 0,
     latAccel: 0,
     latSpeed: 0,
+    airborne: false,
+    airY: 0,
+    airVelocity: 0,
+    jumps: 0,
     compass: orientCompass(0),
     distance: 0,
     sinceLine: 0,
@@ -84,6 +88,10 @@ export function placeVehicle(vehicle, circuit, distance, lateral) {
   vehicle.longAccel = 0;
   vehicle.latAccel = 0;
   vehicle.latSpeed = 0;
+  vehicle.airborne = false;
+  vehicle.airY = sample.height + 0.02;
+  vehicle.airVelocity = 0;
+  vehicle.jumps = 0;
   vehicle.compass = orientCompass(vehicle.heading, sample.up);
 }
 
@@ -99,26 +107,27 @@ export function updateVehicle(vehicle, circuit, dt, input, length) {
 
   const steps = clamp(Math.ceil(dt / STEP), 1, 8);
   const h = dt / steps;
+  const courseLength = length || circuit.length;
   for (let i = 0; i < steps; i += 1) {
     substep(vehicle, circuit, h, {
       throttle: vehicle.engine,
       brake: vehicle.brakePressure,
       handbrake,
       steer,
-    });
+    }, courseLength);
   }
   updateWheels(vehicle, dt, throttle, handbrake);
 
   const previousDistance = vehicle.distance;
   const updated = circuit.query(vehicle.x, vehicle.z);
-  const delta = forwardDelta(previousDistance, updated.distance, length);
+  const delta = forwardDelta(previousDistance, updated.distance, courseLength);
   vehicle.distance = updated.distance;
   if (delta > 0) vehicle.sinceLine += delta;
   vehicle.wrongWay = delta < -0.35 && vehicle.speed > 6 ? vehicle.wrongWay + dt : 0;
-  const wrapped = previousDistance > length * 0.72 && updated.distance < length * 0.22;
+  const wrapped = previousDistance > courseLength * 0.72 && updated.distance < courseLength * 0.22;
   if (!vehicle.finished) {
     vehicle.lapTime += dt;
-    if (wrapped && delta > 0 && vehicle.sinceLine > length * 0.45) {
+    if (wrapped && delta > 0 && vehicle.sinceLine > courseLength * 0.45) {
       vehicle.completed += 1;
       vehicle.lastLap = vehicle.lapTime;
       vehicle.bestLap = vehicle.bestLap == null ? vehicle.lapTime : Math.min(vehicle.bestLap, vehicle.lapTime);
@@ -129,14 +138,16 @@ export function updateVehicle(vehicle, circuit, dt, input, length) {
   return updated;
 }
 
-function substep(vehicle, circuit, h, input) {
+function substep(vehicle, circuit, h, input, length) {
   const sample = circuit.query(vehicle.x, vehicle.z);
+  const startDistance = sample.distance;
+  const startHeight = sample.height;
   let vLong = vehicle.vLong;
   let vLat = vehicle.vLat;
   const absLat = Math.abs(sample.lateral);
-  const surface = absLat > 6.6 ? 'grass' : absLat > 5.9 ? 'gravel' : 'asphalt';
   const speed = Math.abs(vLong);
-  const muBase = MU[surface];
+  const surface = absLat > 6.6 ? 'grass' : (absLat > 5.9 || circuit.stageId === 'ridge') ? 'gravel' : 'asphalt';
+  const muBase = vehicle.airborne ? 0.08 : MU[surface];
 
   const maxSteer = 0.48 / (1 + speed * 0.036);
   const steerTarget = input.steer * maxSteer;
@@ -229,10 +240,38 @@ function substep(vehicle, circuit, h, input) {
   vehicle.z += vehicle.vz * h;
   contain(vehicle, circuit);
   const planted = circuit.query(vehicle.x, vehicle.z);
+  if (!vehicle.airborne && circuit.jumps?.length) {
+    const jump = circuit.jumps.find((candidate) => crossedDistance(startDistance, planted.distance, candidate.distance, length));
+    if (jump && vLong >= jump.minSpeed) {
+      vehicle.airborne = true;
+      vehicle.airY = startHeight + 0.02;
+      vehicle.airVelocity = jump.launchSpeed;
+      vehicle.jumps += 1;
+    }
+  }
+  if (vehicle.airborne) {
+    vehicle.airY += vehicle.airVelocity * h;
+    vehicle.airVelocity -= 9.81 * h;
+    const landingHeight = planted.height + 0.02;
+    if (vehicle.airY <= landingHeight && vehicle.airVelocity < 0) {
+      vehicle.airborne = false;
+      vehicle.airY = landingHeight;
+      vehicle.airVelocity = 0;
+      vehicle.bumpImpulse = 1;
+    }
+  } else {
+    vehicle.airY = planted.height + 0.02;
+  }
   vehicle.compass = orientCompass(vehicle.heading, planted.up);
   vehicle.longAccel = vehicle.longG;
   vehicle.latAccel = vehicle.latG;
   vehicle.latSpeed = vehicle.vLat;
+}
+
+function crossedDistance(from, to, marker, length) {
+  const travelled = forwardDelta(from, to, length);
+  const distanceToMarker = (marker - from + length) % length;
+  return travelled > 0 && distanceToMarker > 1e-5 && distanceToMarker <= travelled + 1e-5;
 }
 
 function wheelDrive(vehicle, throttle, vLong, brake) {
@@ -269,7 +308,8 @@ function contain(vehicle, circuit) {
   const sample = circuit.query(vehicle.x, vehicle.z);
   const lateral = sample.lateral;
   const abs = Math.abs(lateral);
-  if (abs <= WALL) return;
+  const wall = circuit.stageId === 'ridge' ? 13 : WALL;
+  if (abs <= wall) return;
   const sign = Math.sign(lateral) || 1;
   const rx = sample.right.x;
   const rz = sample.right.z;
@@ -281,8 +321,8 @@ function contain(vehicle, circuit) {
     vehicle.vx *= 1 - loss;
     vehicle.vz *= 1 - loss;
   }
-  vehicle.x -= sign * rx * (abs - WALL);
-  vehicle.z -= sign * rz * (abs - WALL);
+  vehicle.x -= sign * rx * (abs - wall);
+  vehicle.z -= sign * rz * (abs - wall);
   const fwdLat = (Math.sin(vehicle.heading) * rx + Math.cos(vehicle.heading) * rz) * sign;
   if (fwdLat > 0.2) {
     const along = Math.atan2(sample.tangent.x, sample.tangent.z);

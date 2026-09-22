@@ -3,6 +3,7 @@ import { clamp } from './util.js';
 import { BANK_OUTER, surfaceHeight, vergeDrop } from './ground.js';
 
 export function createTrack(scene, circuit, textures) {
+  const ridge = circuit.stageId === 'ridge';
   const road = buildRoad(circuit, textures);
   scene.add(road);
 
@@ -12,20 +13,19 @@ export function createTrack(scene, circuit, textures) {
   const bank = buildBank(circuit, textures.grass);
   scene.add(bank);
 
-  const curbs = buildCurbs(circuit);
-  scene.add(curbs);
-
-  const barriers = buildBarriers(circuit);
-  scene.add(barriers.mesh);
-
-  const lamps = buildLamps(circuit);
-  scene.add(lamps);
+  if (ridge) {
+    scene.add(buildJumpSigns(circuit));
+  } else {
+    scene.add(buildCurbs(circuit));
+    const barriers = buildBarriers(circuit);
+    scene.add(barriers.mesh);
+    scene.add(buildLamps(circuit));
+  }
 
   const gantry = buildGantry(circuit);
   scene.add(gantry.group);
 
-  const crowd = buildGrandstand(circuit);
-  scene.add(crowd);
+  if (!ridge) scene.add(buildGrandstand(circuit));
 
   const dressing = buildDressing(circuit);
   scene.add(dressing.group);
@@ -60,22 +60,36 @@ function buildRoad(circuit, textures) {
   geo.setIndex(indices);
   geo.computeTangents();
 
-  const material = new THREE.MeshPhysicalMaterial({
-    map: textures.asphalt.map,
-    normalMap: textures.asphalt.normalMap,
-    normalScale: new THREE.Vector2(0.65, 0.65),
-    roughnessMap: textures.asphalt.roughnessMap,
-    aoMap: textures.asphalt.aoMap,
-    aoMapIntensity: 0.85,
-    roughness: 0.62,
-    metalness: 0.04,
-    clearcoat: 0.28,
-    clearcoatRoughness: 0.22,
-    envMapIntensity: 1.15,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
-  });
+  const surface = circuit.stageId === 'ridge' ? textures.gravel : textures.asphalt;
+  const material = circuit.stageId === 'ridge'
+    ? new THREE.MeshStandardMaterial({
+      map: surface.map,
+      normalMap: surface.normalMap,
+      normalScale: new THREE.Vector2(0.8, 0.8),
+      roughnessMap: surface.roughnessMap,
+      roughness: 0.96,
+      metalness: 0,
+      envMapIntensity: 0.2,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    })
+    : new THREE.MeshPhysicalMaterial({
+      map: surface.map,
+      normalMap: surface.normalMap,
+      normalScale: new THREE.Vector2(0.65, 0.65),
+      roughnessMap: surface.roughnessMap,
+      aoMap: surface.aoMap,
+      aoMapIntensity: 0.85,
+      roughness: 0.62,
+      metalness: 0.04,
+      clearcoat: 0.28,
+      clearcoatRoughness: 0.22,
+      envMapIntensity: 1.15,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
   const mesh = new THREE.Mesh(geo, material);
   mesh.receiveShadow = true;
   mesh.castShadow = false;
@@ -355,7 +369,7 @@ function buildGantry(circuit) {
   ctx.font = '600 78px Oswald, Arial Narrow, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('RQCCCING', 512, 86);
+  ctx.fillText(circuit.stageId === 'ridge' ? 'RIDGEBREAK RALLY' : 'RQCCCING', 512, 86);
   const signMap = new THREE.CanvasTexture(canvas);
   signMap.colorSpace = THREE.SRGBColorSpace;
   const sign = new THREE.Mesh(
@@ -429,7 +443,9 @@ function crowdTexture() {
 function buildDressing(circuit) {
   const group = new THREE.Group();
   const flags = [];
-  const messages = ['GOLDEN HOUR', 'HOLD THE APEX', 'RQCCCING'];
+  const messages = circuit.stageId === 'ridge'
+    ? ['RIDGE LINE', 'HAIRPIN', 'CREST JUMP']
+    : ['GOLDEN HOUR', 'HOLD THE APEX', 'RQCCCING'];
   messages.forEach((text, index) => {
     const s = circuit.atDistance(180 + index * 260);
     const board = new THREE.Mesh(
@@ -458,6 +474,31 @@ function buildDressing(circuit) {
       for (const flag of flags) flag.update(dt);
     },
   };
+}
+
+function buildJumpSigns(circuit) {
+  const group = new THREE.Group();
+  const postMaterial = new THREE.MeshStandardMaterial({ color: 0x34383c, metalness: 0.55, roughness: 0.42 });
+  const signMaterial = new THREE.MeshStandardMaterial({ color: 0xf2eee4, emissive: 0x24180c, emissiveIntensity: 0.25, roughness: 0.75 });
+  const postGeometry = new THREE.CylinderGeometry(0.07, 0.09, 2.2, 8);
+  for (const [index, jump] of circuit.jumps.entries()) {
+    const sample = circuit.atDistance(jump.distance - 16);
+    const lateral = 9.3;
+    const base = sample.point.clone().addScaledVector(sample.right, lateral);
+    const ground = surfaceHeight(base.x, base.z, circuit);
+    const post = new THREE.Mesh(postGeometry, postMaterial);
+    post.position.set(base.x, ground + 1.1, base.z);
+    post.castShadow = true;
+    group.add(post);
+
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 1.1), signMaterial.clone());
+    board.position.set(base.x, ground + 2.45, base.z);
+    faceRoad(board, sample, 1);
+    board.material.map = labelTexture(index === 0 ? 'SWITCHBACK JUMP' : 'EAGLE CREST');
+    board.material.color.set(0xffffff);
+    group.add(board);
+  }
+  return group;
 }
 
 function labelTexture(text) {
@@ -526,7 +567,7 @@ function buildMarkings(circuit) {
   const group = new THREE.Group();
   group.add(markingStrip(circuit.samples, -6.02, -5.58, material));
   group.add(markingStrip(circuit.samples, 5.58, 6.02, material));
-  group.add(dashedCenter(circuit.samples, material));
+  if (circuit.stageId !== 'ridge') group.add(dashedCenter(circuit.samples, material));
   return group;
 }
 

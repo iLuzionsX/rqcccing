@@ -160,14 +160,15 @@ function waterShader(lake) {
 }
 
 function scatterProps(scene, circuit, quality, props) {
+  const ridge = circuit.stageId === 'ridge';
   const specs = [
-    { gltf: props.tree, count: quality.low ? 12 : 26, height: 6.2, clearance: 20, seed: 11 },
-    { gltf: props.shrubA, count: quality.low ? 18 : 40, height: 1.15, clearance: 15, seed: 19 },
-    { gltf: props.shrubB, count: quality.low ? 16 : 34, height: 0.85, clearance: 14.5, seed: 23 },
-    { gltf: props.grassPatch, count: quality.low ? 30 : 70, height: 0.42, clearance: 14, seed: 31 },
-    { gltf: props.rock, count: quality.low ? 14 : 28, height: 0.9, clearance: 14.5, seed: 37 },
-    { gltf: props.boulder, count: quality.low ? 8 : 16, height: 2.1, clearance: 18, seed: 41 },
-    { gltf: props.flower, count: quality.low ? 12 : 28, height: 0.28, clearance: 14, seed: 47 },
+    { gltf: props.tree, count: quality.low ? (ridge ? 20 : 12) : (ridge ? 44 : 26), height: 6.2, clearance: 20, seed: 11 },
+    { gltf: props.shrubA, count: quality.low ? (ridge ? 30 : 18) : (ridge ? 64 : 40), height: 1.15, clearance: 15, seed: 19 },
+    { gltf: props.shrubB, count: quality.low ? (ridge ? 26 : 16) : (ridge ? 56 : 34), height: 0.85, clearance: 14.5, seed: 23 },
+    { gltf: props.grassPatch, count: quality.low ? (ridge ? 42 : 30) : (ridge ? 88 : 70), height: 0.42, clearance: 14, seed: 31 },
+    { gltf: props.rock, count: quality.low ? (ridge ? 28 : 14) : (ridge ? 58 : 28), height: 0.9, clearance: 14.5, seed: 37 },
+    { gltf: props.boulder, count: quality.low ? (ridge ? 18 : 8) : (ridge ? 34 : 16), height: 2.1, clearance: 18, seed: 41 },
+    { gltf: props.flower, count: quality.low ? (ridge ? 14 : 12) : (ridge ? 32 : 28), height: 0.28, clearance: 14, seed: 47 },
   ];
   for (const spec of specs) scatter(scene, circuit, spec);
 }
@@ -192,6 +193,7 @@ function scatter(scene, circuit, spec) {
   });
   const rand = mulberry32(spec.seed);
   const dummy = new THREE.Object3D();
+  const heightLimit = circuit.stageId === 'ridge' ? 72 : 22;
   let placed = 0;
   let guard = 0;
   while (placed < spec.count && guard < spec.count * 40) {
@@ -202,7 +204,7 @@ function scatter(scene, circuit, spec) {
     const dl = Math.hypot(x - circuit.lake.x, z - circuit.lake.z);
     if (Math.abs(q.lateral) < spec.clearance || dl < circuit.lake.radius + 4) continue;
     const y = surfaceHeight(x, z, circuit);
-    if (y < circuit.lake.y + 0.15 || y > 22) continue;
+    if (y < circuit.lake.y + 0.15 || y > heightLimit) continue;
     const scale = (spec.height * (0.72 + rand() * 0.55)) / modelHeight;
     dummy.position.set(x, y - bounds.min.y * scale, z);
     dummy.rotation.set(0, rand() * Math.PI * 2, 0);

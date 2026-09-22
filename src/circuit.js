@@ -16,19 +16,28 @@ export const LAKE = {
   y: 0.4,
 };
 
-export function createCircuit(segments = 640) {
-  const points = stagePoints();
+export function createCircuit(segments = 640, requestedStage = selectedStage()) {
+  const stage = stageDefinition(requestedStage);
+  const points = stage.points;
   const curve = new THREE.CatmullRomCurve3(points, true, 'centripetal', 0.35);
   const raw = sampleCenterline(curve, segments);
   const samples = smoothBanks(frameSamples(raw));
   const length = samples[samples.length - 1].distance;
+  const jumps = stage.jumps.map((jump) => ({
+    ...jump,
+    distance: nearestDistance(samples, points[jump.waypoint]),
+  })).sort((a, b) => a.distance - b.distance);
 
   return {
     curve,
     samples,
     length,
     halfWidth: 6,
-    lake: LAKE,
+    stageId: stage.id,
+    stageName: stage.name,
+    stageDescription: stage.description,
+    lake: stage.lake,
+    jumps,
     query(x, z) {
       return querySamples(samples, x, z);
     },
@@ -38,7 +47,61 @@ export function createCircuit(segments = 640) {
   };
 }
 
-function stagePoints() {
+function selectedStage() {
+  if (typeof globalThis.location === 'undefined') return 'coast';
+  return new URLSearchParams(globalThis.location.search).get('stage') || 'coast';
+}
+
+function stageDefinition(stageId) {
+  if (stageId === 'ridge') {
+    return {
+      id: 'ridge',
+      name: 'Ridgebreak Rally',
+      description: 'A high-country rally loop with tight switchbacks, exposed ridgelines, and two proper jumps.',
+      lake: { x: -286, z: 74, radius: 43, y: 0.4 },
+      points: ridgePoints(),
+      jumps: [
+        { id: 'switchback-drop', waypoint: 7, launchSpeed: 8.1, minSpeed: 13 },
+        { id: 'eagle-crest', waypoint: 16, launchSpeed: 9.2, minSpeed: 15 },
+      ],
+    };
+  }
+  return {
+    id: 'coast',
+    name: 'Golden Hour GP',
+    description: 'Three laps around a wet coastal circuit. The sun is low, the lake is glass, and the asphalt still holds the rain.',
+    lake: LAKE,
+    points: coastalPoints(),
+    jumps: [],
+  };
+}
+
+function nearestDistance(samples, target) {
+  let distance = 0;
+  let best = Infinity;
+  for (let i = 0; i < samples.length - 1; i += 1) {
+    const candidate = samples[i].point.distanceToSquared(target);
+    if (candidate < best) {
+      best = candidate;
+      distance = samples[i].distance;
+    }
+  }
+  return distance;
+}
+
+function ridgePoints() {
+  return [
+    [-175, 5, -235], [-92, 6, -235], [0, 9, -232], [73, 15, -216],
+    [112, 25, -170], [118, 34, -100], [91, 42, -42], [42, 46, -26],
+    [6, 43, -62], [35, 34, -101], [-20, 28, -128], [-76, 31, -97],
+    [-104, 39, -41], [-76, 48, 13], [-22, 53, 33], [34, 57, 21],
+    [82, 63, 47], [137, 61, 34], [179, 54, -5], [165, 47, -53],
+    [121, 40, -81], [145, 31, -128], [163, 22, -180], [122, 13, -238],
+    [65, 8, -285], [0, 6, -292], [-86, 5, -290], [-154, 4, -276],
+  ].map(([x, y, z]) => new THREE.Vector3(x, y, z));
+}
+
+function coastalPoints() {
   const sh = Math.sin(HEADING);
   const ch = Math.cos(HEADING);
   const local = [];
