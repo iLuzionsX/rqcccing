@@ -5,11 +5,14 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      preview_pr:
+        description: "PR number to publish under /previews/pr-<number>/; leave blank for main only"
+        required: false
+        type: string
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -37,61 +40,74 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Upload PR build
-        if: github.event_name == 'pull_request'
+      - name: Upload main build for preview
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.preview_pr != ''
         uses: actions/upload-artifact@v4
         with:
-          name: pr-build
+          name: main-build
           path: dist
           if-no-files-found: error
           retention-days: 1
 
       - name: Upload Pages artifact
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || github.event.inputs.preview_pr == '')
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
   deploy-preview:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.preview_pr != ''
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
-      name: github-pages-preview
-      url: ${{ steps.deployment.outputs.page_url }}previews/pr-${{ github.event.pull_request.number }}/
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}previews/pr-${{ github.event.inputs.preview_pr }}/
     steps:
-      - name: Checkout main site
+      - name: Validate pull request number
+        env:
+          PR_NUMBER: ${{ github.event.inputs.preview_pr }}
+        run: |
+          if ! [[ "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "::error::preview_pr must be a pull request number"
+            exit 1
+          fi
+
+      - name: Checkout PR merge commit
         uses: actions/checkout@v4
         with:
-          ref: main
-          path: main
+          ref: refs/pull/${{ github.event.inputs.preview_pr }}/merge
+          path: preview-source
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: main/package-lock.json
+          cache-dependency-path: preview-source/package-lock.json
 
-      - name: Build main site
-        working-directory: main
+      - name: Build PR preview
+        working-directory: preview-source
         run: |
           npm ci
           npm run build
 
-      - name: Download PR build
+      - name: Download main build
         uses: actions/download-artifact@v4
         with:
-          name: pr-build
-          path: pr-build
+          name: main-build
+          path: main-build
 
       - name: Combine main and preview builds
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.inputs.preview_pr }}
         run: |
           mkdir -p "site/previews/pr-${PR_NUMBER}"
-          cp -R main/dist/. site/
-          cp -R pr-build/. "site/previews/pr-${PR_NUMBER}/"
+          cp -R main-build/. site/
+          cp -R preview-source/dist/. "site/previews/pr-${PR_NUMBER}/"
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
@@ -103,9 +119,13 @@ jobs:
         uses: actions/deploy-pages@v4
 
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || github.event.inputs.preview_pr == '')
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
