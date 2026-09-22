@@ -62,10 +62,9 @@ function rallyFixture() {
       wheel.name = 'Wheel_' + wheelIndex;
       wheel.position.set(x, 0.22 + index * 0.005, z);
       const radius = 0.34 + index * 0.003;
-      wheel.add(new THREE.Mesh(
-        new THREE.CylinderGeometry(radius, radius, 0.18, 12),
-        new THREE.MeshStandardMaterial(),
-      ));
+      const tireGeometry = new THREE.CylinderGeometry(radius, radius, 0.18, 12);
+      tireGeometry.rotateZ(Math.PI / 2);
+      wheel.add(new THREE.Mesh(tireGeometry, new THREE.MeshStandardMaterial()));
       rootNode.add(wheel);
     }
   }
