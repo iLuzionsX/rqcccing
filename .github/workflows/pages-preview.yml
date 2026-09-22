@@ -1,6 +1,8 @@
 name: Deploy PR preview to GitHub Pages
 
 on:
+  push:
+    branches: [main]
   workflow_run:
     workflows: ["Deploy GitHub Pages"]
     types: [completed]
@@ -14,12 +16,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resolve-preview:
+    if: >-
+      (github.event_name == 'push' &&
+       contains(github.event.head_commit.message, 'publish-preview-pr=')) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.pull_requests[0].number != null)
+    runs-on: ubuntu-latest
+    outputs:
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+    steps:
+      - name: Resolve pull request number
+        id: resolve
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+          PR_FROM_RUN: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          if [[ "${EVENT_NAME}" == "push" ]]; then
+            if [[ "${HEAD_MESSAGE}" =~ publish-preview-pr=([0-9]+) ]]; then
+              PR_NUMBER="${BASH_REMATCH[1]}"
+            else
+              echo "::error::The commit message does not contain a preview PR marker"
+              exit 1
+            fi
+          else
+            PR_NUMBER="${PR_FROM_RUN}"
+          fi
+
+          if ! [[ "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Could not resolve a valid pull request number"
+            exit 1
+          fi
+
+          echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+
   build-main:
-    if: >
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.pull_requests[0].number != null
+    needs: resolve-preview
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main
@@ -48,12 +85,7 @@ jobs:
           retention-days: 1
 
   deploy-preview:
-    if: >
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      github.event.workflow_run.pull_requests[0].number != null
-    needs: build-main
+    needs: [resolve-preview, build-main]
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -62,7 +94,7 @@ jobs:
       id-token: write
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}previews/pr-${{ github.event.workflow_run.pull_requests[0].number }}/
+      url: ${{ steps.deployment.outputs.page_url }}previews/pr-${{ needs.resolve-preview.outputs.pr_number }}/
     steps:
       - name: Download main build
         uses: actions/download-artifact@v4
@@ -70,7 +102,37 @@ jobs:
           name: main-build
           path: main-build
 
-      - name: Download PR build
+      - name: Checkout PR merge commit for marker pushes
+        if: github.event_name == 'push'
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ needs.resolve-preview.outputs.pr_number }}/merge
+          path: preview-source
+
+      - name: Setup Node for marker pushes
+        if: github.event_name == 'push'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: preview-source/package-lock.json
+
+      - name: Build PR preview for marker pushes
+        if: github.event_name == 'push'
+        working-directory: preview-source
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: Copy PR build for marker pushes
+        if: github.event_name == 'push'
+        run: |
+          mkdir -p pr-build
+          cp -R preview-source/dist/. pr-build/
+
+      - name: Download PR build from completed pull request run
+        if: github.event_name == 'workflow_run'
         uses: actions/download-artifact@v4
         with:
           name: pr-build
@@ -81,7 +143,7 @@ jobs:
 
       - name: Combine main and preview builds
         env:
-          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          PR_NUMBER: ${{ needs.resolve-preview.outputs.pr_number }}
         run: |
           mkdir -p "site/previews/pr-${PR_NUMBER}"
           cp -R main-build/. site/
