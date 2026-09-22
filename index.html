@@ -15,6 +15,13 @@
       <p class="eyebrow">GOLDEN HOUR GP</p>
       <h1>RQCCCING</h1>
       <p class="lede">Three laps around a wet coastal circuit. The sun is low, the lake is glass, and the asphalt still holds the rain.</p>
+      <div class="stage-picker">
+        <label for="stage-select">STAGE</label>
+        <select id="stage-select" aria-label="Choose a rally stage">
+          <option value="coast">Golden Hour GP</option>
+          <option value="ridge">Ridgebreak Rally</option>
+        </select>
+      </div>
       <button class="drive" id="start" type="button">Drive</button>
       <p class="keys">Steer A D · throttle W · brake S · handbrake Space · camera C · reset R</p>
       <p class="credits">World textures, HDRI, and plants by Poly Haven (CC0). Rally cars from “Low Poly Rally Cars Pack” by MuhammadOkky, CC BY 4.0.</p>
@@ -61,6 +68,38 @@
       <button id="gas" type="button">GAS</button>
     </div>
 
+    <script>
+      (() => {
+        const stages = {
+          coast: {
+            eyebrow: 'GOLDEN HOUR GP',
+            title: 'RQCCCING',
+            description: 'Three laps around a wet coastal circuit. The sun is low, the lake is glass, and the asphalt still holds the rain.',
+          },
+          ridge: {
+            eyebrow: 'HIGH COUNTRY RALLY',
+            title: 'RIDGEBREAK',
+            description: 'A high-country gravel loop with tight switchbacks, exposed ridgelines, and two proper jumps.',
+          },
+        };
+        const picker = document.querySelector('#stage-select');
+        const params = new URLSearchParams(window.location.search);
+        const selected = stages[params.get('stage')] ? params.get('stage') : 'coast';
+        picker.value = selected;
+        const renderTitle = () => {
+          const stage = stages[picker.value];
+          document.title = picker.value === 'ridge' ? 'Ridgebreak Rally · RQCCCING' : 'RQCCCING';
+          document.querySelector('#title .eyebrow').textContent = stage.eyebrow;
+          document.querySelector('#title h1').textContent = stage.title;
+          document.querySelector('#title .lede').textContent = stage.description;
+        };
+        renderTitle();
+        picker.addEventListener('change', () => {
+          params.set('stage', picker.value);
+          window.location.search = params.toString();
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
