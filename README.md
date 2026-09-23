@@ -33,7 +33,7 @@ Open the local URL Vite prints. `npm run build` writes a static site to `dist/`.
 
 Cars launch at the two marked crests on Ridgebreak when they reach the ramp at speed. They follow a short ballistic arc and settle back onto the road on landing.
 
-On a phone, steer with the on-screen wheel and use the pedals. Settings → Move controls lets you drag the wheel, gas, brake, and handbrake. That layout is saved on this device. The race is three laps. Finish position is frozen when you cross the line for the third time. One best lap per stage is kept in local storage on this device.
+On a phone, steer with the on-screen wheel and use the pedals. The wheel matches a CarX-style phone wheel: hold it and turn, a quarter turn is full lock, the middle few degrees stay straight, and it springs back to center when you let go. Grabbing it again does not jump the angle to your thumb. Settings → Move controls lets you drag the wheel, gas, brake, and handbrake. That layout is saved on this device. The race is three laps. Finish position is frozen when you cross the line for the third time. One best lap per stage is kept in local storage on this device.
 
 ## Sounds
 
