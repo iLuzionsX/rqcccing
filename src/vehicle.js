@@ -7,7 +7,7 @@ const INERTIA = 2920;
 const LF = 1.28;
 const LR = 1.48;
 const WHEELBASE = LF + LR;
-const CG_H = 0.56;
+const CG_H = 0.6;
 const TRACK = 1.52;
 const MAX_SPEED = 63;
 const WALL = 7.55;
@@ -16,7 +16,7 @@ const G = 9.81;
 
 const SHIFT_UP = [0, 13.5, 24.5, 36, 46, 55, 999];
 const GEAR_FORCE = [0, 11200, 9000, 6800, 5200, 4000, 3100];
-const ENGINE_BRAKE = [0, 2600, 1850, 1280, 860, 580, 420];
+const ENGINE_BRAKE = [0, 3200, 2200, 1280, 860, 580, 420];
 const MU = { asphalt: 1.28, gravel: 0.7, grass: 0.44 };
 
 export function createVehicle(kind) {
@@ -49,6 +49,7 @@ export function createVehicle(kind) {
     airY: 0,
     airVelocity: 0,
     jumps: 0,
+    lastJumpId: null,
     compass: orientCompass(0),
     distance: 0,
     sinceLine: 0,
@@ -92,6 +93,7 @@ export function placeVehicle(vehicle, circuit, distance, lateral) {
   vehicle.airY = sample.height + 0.02;
   vehicle.airVelocity = 0;
   vehicle.jumps = 0;
+  vehicle.lastJumpId = null;
   vehicle.compass = orientCompass(vehicle.heading, sample.up);
 }
 
@@ -184,8 +186,11 @@ function substep(vehicle, circuit, h, input, length) {
   if (absLat > 5.55 && absLat < 6.75) drag += 0.36 * vLong * Math.abs(vLong);
 
   const aProp = (fxF + fxR - drag) / MASS;
-  const frame = orientCompass(vehicle.heading, sample.up);
-  const grade = surfaceGravity(sample.up, frame);
+  const supportUp = vehicle.airborne
+    ? flightSurfaceUp(vehicle.heading, vehicle.airVelocity, vLong)
+    : sample.up;
+  const frame = orientCompass(vehicle.heading, supportUp);
+  const grade = vehicle.airborne ? { long: 0, lat: 0 } : surfaceGravity(sample.up, frame);
   const aLong = clamp(aProp + grade.long, -15, 8.5);
   const aLatTires = (fyF + fyR) / MASS;
   const aLat = clamp(aLatTires + grade.lat, -13, 13);
@@ -240,38 +245,78 @@ function substep(vehicle, circuit, h, input, length) {
   vehicle.z += vehicle.vz * h;
   contain(vehicle, circuit);
   const planted = circuit.query(vehicle.x, vehicle.z);
-  if (!vehicle.airborne && circuit.jumps?.length) {
-    const jump = circuit.jumps.find((candidate) => crossedDistance(startDistance, planted.distance, candidate.distance, length));
-    if (jump && vLong >= jump.minSpeed) {
+  if (!vehicle.airborne) {
+    const launch = surfaceLaunch(circuit, sample, vLong, length);
+    if (launch && vehicle.lastJumpId !== launch.jump.id) {
       vehicle.airborne = true;
       vehicle.airY = startHeight + 0.02;
-      vehicle.airVelocity = jump.launchSpeed;
+      vehicle.airVelocity = launch.vy;
       vehicle.jumps += 1;
+      vehicle.lastJumpId = launch.jump.id;
+    } else if (vehicle.lastJumpId) {
+      const previous = circuit.jumps?.find((jump) => jump.id === vehicle.lastJumpId);
+      if (!previous) vehicle.lastJumpId = null;
+      else {
+        const along = (planted.distance - previous.distance + length) % length;
+        const signed = along > length * 0.5 ? along - length : along;
+        if (signed > 24 || signed < -12) vehicle.lastJumpId = null;
+      }
     }
   }
   if (vehicle.airborne) {
     vehicle.airY += vehicle.airVelocity * h;
-    vehicle.airVelocity -= 9.81 * h;
+    vehicle.airVelocity -= G * h;
     const landingHeight = planted.height + 0.02;
     if (vehicle.airY <= landingHeight && vehicle.airVelocity < 0) {
+      const impact = clamp(-vehicle.airVelocity / 8, 0.25, 1);
       vehicle.airborne = false;
       vehicle.airY = landingHeight;
       vehicle.airVelocity = 0;
-      vehicle.bumpImpulse = 1;
+      vehicle.bumpImpulse = impact;
+      vehicle.vLong *= 1 - impact * 0.04;
+      vehicle.speed = vehicle.vLong;
     }
   } else {
     vehicle.airY = planted.height + 0.02;
+    vehicle.airVelocity = 0;
   }
-  vehicle.compass = orientCompass(vehicle.heading, planted.up);
+  const flightUp = vehicle.airborne
+    ? flightSurfaceUp(vehicle.heading, vehicle.airVelocity, vehicle.vLong)
+    : planted.up;
+  vehicle.compass = orientCompass(vehicle.heading, flightUp);
   vehicle.longAccel = vehicle.longG;
   vehicle.latAccel = vehicle.latG;
   vehicle.latSpeed = vehicle.vLat;
 }
 
-function crossedDistance(from, to, marker, length) {
-  const travelled = forwardDelta(from, to, length);
-  const distanceToMarker = (marker - from + length) % length;
-  return travelled > 0 && distanceToMarker > 1e-5 && distanceToMarker <= travelled + 1e-5;
+function surfaceLaunch(circuit, sample, vLong, length) {
+  if (!circuit.jumps?.length || !circuit.atDistance) return null;
+  const ramp = circuit.atDistance(sample.distance - 7);
+  const nose = circuit.atDistance(sample.distance + 6);
+  const rampSlope = ramp.tangent?.y || 0;
+  const noseSlope = nose.tangent?.y || 0;
+  const here = sample.tangent?.y || 0;
+  // The lip still carries the ramp's upward speed, and the landing has fallen away.
+  if (rampSlope < 0.1 || noseSlope > -0.08 || here > rampSlope - 0.08) return null;
+  const jump = circuit.jumps.find((candidate) => {
+    if (vLong < candidate.minSpeed) return false;
+    const along = (sample.distance - candidate.distance + length) % length;
+    const signed = along > length * 0.5 ? along - length : along;
+    return signed > -2.5 && signed < 7;
+  });
+  if (!jump) return null;
+  return { jump, vy: Math.max(vLong * rampSlope, 0) };
+}
+
+function flightSurfaceUp(heading, airVelocity, vLong) {
+  const pitch = Math.atan2(airVelocity, Math.max(Math.abs(vLong), 3));
+  const sp = Math.sin(pitch);
+  const cp = Math.cos(pitch);
+  return {
+    x: Math.sin(heading) * sp,
+    y: cp,
+    z: Math.cos(heading) * sp,
+  };
 }
 
 function wheelDrive(vehicle, throttle, vLong, brake) {
@@ -363,10 +408,15 @@ function updateWheels(vehicle, dt, throttle, handbrake) {
 }
 
 function tireLat(slip, load, mu) {
-  const x = slip / 0.17;
-  const response = x / (1 + Math.abs(x));
-  const falloff = 1 / (1 + Math.max(0, Math.abs(slip) - 0.32) * 1.35);
-  return -response * mu * load * (0.7 + 0.3 * falloff);
+  const slipAbs = Math.abs(slip);
+  const early = slipAbs / 0.15;
+  const shaped = early <= 1 ? early * (1.05 - 0.05 * early) : 1 / (1 + (early - 1) * 0.22);
+  const legacyX = slipAbs / 0.17;
+  const legacyFalloff = 1 / (1 + Math.max(0, slipAbs - 0.32) * 1.35);
+  const legacy = (legacyX / (1 + legacyX)) * (0.7 + 0.3 * legacyFalloff);
+  // Earlier peak than the shipped curve, with the same deep-slide grip.
+  const grip = legacy * 0.72 + shaped * 0.34;
+  return -Math.sign(slip || 0) * grip * mu * load;
 }
 
 function frictionCircle(fx, fy, limit) {

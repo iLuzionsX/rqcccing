@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { damp, clamp } from './util.js';
-import { orientCompass } from './compass.js';
+import { bodyAttitude, orientCompass } from './compass.js';
 
 const _nose = new THREE.Vector3();
 const _right = new THREE.Vector3();
@@ -120,12 +120,18 @@ export function syncCar(model, vehicle, sample, dt, input) {
   const throttle = input.throttle || 0;
   const brake = input.brake || 0;
   const steer = input.steer || 0;
-  const targetPitch = clamp(-(vehicle.longG || 0) * 0.026, -0.11, 0.09);
-  const targetRoll = clamp((vehicle.latG || 0) * 0.04, -0.14, 0.14);
-  model.pitch = damp(model.pitch, targetPitch, 3.1, dt);
-  model.roll = damp(model.roll, targetRoll, 2.7, dt);
+  const solved = bodyAttitude(vehicle.longAccel || 0, vehicle.latAccel || 0);
+  let targetPitch = solved.pitch;
+  let targetRoll = solved.roll;
+  if (vehicle.airborne) {
+    targetPitch = clamp(-vehicle.airVelocity * 0.016, -0.18, 0.14);
+    targetRoll *= 0.35;
+  }
+  model.pitch = damp(model.pitch, targetPitch, 5.5, dt);
+  model.roll = damp(model.roll, targetRoll, 4.6, dt);
   model.chassis.rotation.x = model.pitch;
   model.chassis.rotation.z = model.roll;
+  settleSuspension(model, vehicle);
 
   const curb = Math.abs(sample.lateral) > 5.5 && Math.abs(sample.lateral) < 6.7 && Math.abs(vehicle.speed) > 10;
   if (vehicle.bumpImpulse > 0) {
@@ -149,6 +155,22 @@ export function syncCar(model, vehicle, sample, dt, input) {
   model.tail.emissiveIntensity = braking ? 10 : 1.7;
   const beamOpacity = 0.05 + throttle * 0.03;
   for (const beam of model.beams) beam.material.opacity = beamOpacity;
+}
+
+function settleSuspension(model, vehicle) {
+  const longAccel = vehicle.longAccel || 0;
+  const latAccel = vehicle.latAccel || 0;
+  model.wheels.forEach((pivot, index) => {
+    const front = index < 2;
+    const side = pivot.userData.side || 1;
+    const restY = pivot.userData.restY ?? pivot.position.y;
+    if (pivot.userData.restY == null) pivot.userData.restY = restY;
+    const longLoad = (front ? -longAccel : longAccel);
+    const latLoad = -side * latAccel;
+    let travel = clamp(longLoad * 0.0055 + latLoad * 0.0048, -0.05, 0.06);
+    if (vehicle.airborne) travel = -0.04;
+    pivot.position.y = restY + travel;
+  });
 }
 
 function catalogCars(scene) {
@@ -190,6 +212,8 @@ function mountWheel(root, wheel) {
   pivot.add(spinner);
   root.add(pivot);
   spinner.attach(wheel);
+  pivot.userData.restY = pivot.position.y;
+  pivot.userData.side = Math.sign(_pos.x) || 1;
   return { pivot, spinner, front: _pos.z > 0 };
 }
 
