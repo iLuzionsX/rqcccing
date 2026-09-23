@@ -1,16 +1,26 @@
 import { clamp } from './util.js';
 
 const FILES = [
-  ['engine', '/assets/audio/engine.ogg'],
-  ['squeal', '/assets/audio/squeal.ogg'],
-  ['gravel', '/assets/audio/gravel.ogg'],
-  ['asphalt', '/assets/audio/asphalt.ogg'],
+  ['engine', 'engine.ogg'],
+  ['squeal', 'squeal.ogg'],
+  ['gravel', 'gravel.ogg'],
+  ['asphalt', 'asphalt.ogg'],
 ];
+
+function assetBase() {
+  const base = import.meta.env?.BASE_URL;
+  return typeof base === 'string' && base.length > 0 ? base : './';
+}
+
+export function audioAssetUrl(file) {
+  return `${assetBase()}assets/audio/${file}`;
+}
 
 const GEAR_BANDS = [0, 42, 78, 118, 158, 205, 280];
 
 export function loadAudioFiles() {
-  return Promise.all(FILES.map(async ([id, url]) => {
+  return Promise.all(FILES.map(async ([id, file]) => {
+    const url = audioAssetUrl(file);
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Missing ${url}`);
     return [id, await response.arrayBuffer()];

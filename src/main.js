@@ -235,8 +235,13 @@ function step(dt) {
 }
 
 async function begin(resetRace = false) {
-  await ensureAudio();
-  audio.resume();
+  try {
+    await ensureAudio();
+    await audio?.resume();
+  } catch (error) {
+    console.error(error);
+  }
+  if (!audio) audio = silentAudio();
   if (resetRace || race.phase === 'title' || race.phase === 'finish') {
     resetCars();
     race.phase = 'countdown';
@@ -343,7 +348,7 @@ function returnToMenu() {
 function updateCountdownAudio() {
   if (race.phase !== 'countdown') {
     if (beepState !== 99 && race.phase === 'race') {
-      audio.tone(880, 0.28, 'square', 0.05);
+      audio?.tone(880, 0.28, 'square', 0.05);
       track.setLights('green');
       beepState = 99;
     }
@@ -352,7 +357,7 @@ function updateCountdownAudio() {
   track.setLights('red');
   const mark = Math.ceil(race.countdown);
   if (mark !== beepState && mark <= 3 && mark >= 1) {
-    audio.tone(420 + (3 - mark) * 70, 0.14, 'square', 0.045);
+    audio?.tone(420 + (3 - mark) * 70, 0.14, 'square', 0.045);
     beepState = mark;
   }
 }
@@ -675,6 +680,10 @@ function applyWheel(rotor) {
   wheel.setAttribute('aria-valuetext', touch.steer > 0.08 ? 'Right' : touch.steer < -0.08 ? 'Left' : 'Centered');
 }
 
+function silentAudio() {
+  return { resume() {}, suspend() {}, setMuted() {}, update() {}, tone() {} };
+}
+
 function ensureAudio() {
   if (!audioReady) {
     audioReady = loadAudioFiles().then(async (encoded) => {
@@ -682,9 +691,13 @@ function ensureAudio() {
         audio = await createAudio(encoded);
       } catch (error) {
         console.error(error);
-        audio = { resume() {}, suspend() {}, setMuted() {}, update() {}, tone() {} };
+        audio = silentAudio();
       }
       if (muted) audio.setMuted(true);
+      audioOn = true;
+    }).catch((error) => {
+      console.error(error);
+      audio = silentAudio();
       audioOn = true;
     });
   }
