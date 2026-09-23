@@ -237,7 +237,7 @@ function step(dt) {
 async function begin(resetRace = false) {
   try {
     await ensureAudio();
-    await audio?.resume();
+    void audio?.resume();
   } catch (error) {
     console.error(error);
   }
