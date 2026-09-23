@@ -51,7 +51,7 @@ export function createTrack(scene, circuit, textures) {
 }
 
 function buildRoad(circuit, textures) {
-  const { positions, normals, uvs, indices } = ribbon(circuit.samples, -6.05, 6.05, 0.05, 0.05, 2);
+  const { positions, normals, uvs, indices } = ribbon(circuit.samples, -6.05, 6.05, 0.05, 0.05, 4.5);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
@@ -60,16 +60,18 @@ function buildRoad(circuit, textures) {
   geo.setIndex(indices);
   geo.computeTangents();
 
-  const surface = circuit.stageId === 'ridge' ? textures.gravel : textures.asphalt;
-  const material = circuit.stageId === 'ridge'
+  const ridge = circuit.stageId === 'ridge';
+  const surface = ridge ? textures.gravel : textures.asphalt;
+  const material = ridge
     ? new THREE.MeshStandardMaterial({
       map: surface.map,
+      color: 0xa89074,
       normalMap: surface.normalMap,
-      normalScale: new THREE.Vector2(0.8, 0.8),
+      normalScale: new THREE.Vector2(1.35, 1.35),
       roughnessMap: surface.roughnessMap,
-      roughness: 0.96,
+      roughness: 0.9,
       metalness: 0,
-      envMapIntensity: 0.2,
+      envMapIntensity: 0.48,
       polygonOffset: true,
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
@@ -77,15 +79,15 @@ function buildRoad(circuit, textures) {
     : new THREE.MeshPhysicalMaterial({
       map: surface.map,
       normalMap: surface.normalMap,
-      normalScale: new THREE.Vector2(0.65, 0.65),
+      normalScale: new THREE.Vector2(1.05, 1.05),
       roughnessMap: surface.roughnessMap,
       aoMap: surface.aoMap,
-      aoMapIntensity: 0.85,
-      roughness: 0.62,
-      metalness: 0.04,
-      clearcoat: 0.28,
-      clearcoatRoughness: 0.22,
-      envMapIntensity: 1.15,
+      aoMapIntensity: 0.9,
+      roughness: 0.58,
+      metalness: 0.03,
+      clearcoat: 0.16,
+      clearcoatRoughness: 0.38,
+      envMapIntensity: 0.82,
       polygonOffset: true,
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
@@ -117,16 +119,18 @@ function buildShoulders(circuit, textures) {
     }
   }
   geo.computeTangents();
+  const ridge = circuit.stageId === 'ridge';
   const mesh = new THREE.Mesh(
     geo,
     new THREE.MeshStandardMaterial({
       map: textures.gravel.map,
+      color: ridge ? 0xd7c7aa : 0xffffff,
       normalMap: textures.gravel.normalMap,
-      normalScale: new THREE.Vector2(0.8, 0.8),
+      normalScale: new THREE.Vector2(ridge ? 1.15 : 0.8, ridge ? 1.15 : 0.8),
       roughnessMap: textures.gravel.roughnessMap,
       roughness: 1,
       metalness: 0,
-      envMapIntensity: 0.35,
+      envMapIntensity: ridge ? 0.28 : 0.35,
       polygonOffset: true,
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -2,

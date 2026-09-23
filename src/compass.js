@@ -8,8 +8,8 @@ import { clamp } from './util.js';
 // Positive roll rotation (about +forward) lifts the +right side.
 
 const WORLD_UP = { x: 0, y: 1, z: 0 };
-const PITCH_PER_ACCEL = 0.012;
-const ROLL_PER_ACCEL = 0.014;
+const PITCH_PER_ACCEL = 0.02;
+const ROLL_PER_ACCEL = 0.024;
 
 export function orientCompass(heading, surfaceUp = WORLD_UP) {
   const up = normalize(surfaceUp) || WORLD_UP;
@@ -27,10 +27,10 @@ export function orientCompass(heading, surfaceUp = WORLD_UP) {
 export function bodyAttitude(longAccel = 0, latAccel = 0) {
   return {
     // Forward acceleration throws the body back, so the nose rises.
-    pitch: clamp(-longAccel * PITCH_PER_ACCEL, -0.08, 0.09),
+    pitch: clamp(-longAccel * PITCH_PER_ACCEL, -0.12, 0.11),
     // Lateral acceleration points at the inside of the corner. The body
     // settles onto the outside tires, which lifts the inside (+right in a right turn).
-    roll: clamp(latAccel * ROLL_PER_ACCEL, -0.12, 0.12),
+    roll: clamp(latAccel * ROLL_PER_ACCEL, -0.16, 0.16),
   };
 }
 

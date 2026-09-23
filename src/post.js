@@ -45,13 +45,16 @@ const GradeShader = {
 export function createComposer(renderer, scene, camera, quality) {
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new UnrealBloomPass(
-    new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.12,
-    0.42,
-    0.98,
-  );
-  if (quality.bloom) composer.addPass(bloom);
+  let bloom = null;
+  if (quality.bloom) {
+    bloom = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      0.12,
+      0.42,
+      0.98,
+    );
+    composer.addPass(bloom);
+  }
   const grade = new ShaderPass(GradeShader);
   composer.addPass(grade);
   const fxaa = new ShaderPass(FXAAShader);

@@ -125,7 +125,7 @@ const clock = new THREE.Clock();
 loadGameAssets(renderer).then((assets) => {
   rallyAssets = assets.rally;
   rebuildCarModels();
-  lighting = createLighting(scene, renderer, assets.hdr);
+  lighting = createLighting(scene, renderer, assets.hdr, circuit.stageId);
   track = createTrack(scene, circuit, assets);
   environment = createEnvironment(scene, circuit, quality, assets);
   hud.start.disabled = false;
