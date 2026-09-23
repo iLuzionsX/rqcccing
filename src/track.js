@@ -112,19 +112,13 @@ function buildShoulders(circuit, textures) {
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(indices);
   geo.computeVertexNormals();
-  const shoulderNormals = geo.attributes.normal;
-  for (let i = 0; i < shoulderNormals.count; i += 1) {
-    if (shoulderNormals.getY(i) < 0) {
-      shoulderNormals.setXYZ(i, -shoulderNormals.getX(i), -shoulderNormals.getY(i), -shoulderNormals.getZ(i));
-    }
-  }
   geo.computeTangents();
   const ridge = circuit.stageId === 'ridge';
   const mesh = new THREE.Mesh(
     geo,
     new THREE.MeshStandardMaterial({
       map: textures.gravel.map,
-      color: ridge ? 0xd7c7aa : 0xffffff,
+      color: ridge ? 0xa99479 : 0xffffff,
       normalMap: textures.gravel.normalMap,
       normalScale: new THREE.Vector2(ridge ? 1.15 : 0.8, ridge ? 1.15 : 0.8),
       roughnessMap: textures.gravel.roughnessMap,
@@ -140,7 +134,7 @@ function buildShoulders(circuit, textures) {
   return mesh;
 }
 
-function buildBank(circuit, grassMaps) {
+export function buildBank(circuit, grassMaps) {
   const rings = [11.45, 16.4, 22.2, BANK_OUTER];
   const samples = circuit.samples;
   const positions = [];
@@ -163,7 +157,11 @@ function buildBank(circuit, grassMaps) {
     for (let i = 0; i < samples.length - 1; i += 1) {
       for (let ring = 0; ring < cols - 1; ring += 1) {
         const a = base + i * cols + ring;
-        indices.push(a, a + cols, a + 1, a + 1, a + cols, a + cols + 1);
+        if (side < 0) {
+          indices.push(a, a + 1, a + cols, a + 1, a + cols + 1, a + cols);
+        } else {
+          indices.push(a, a + cols, a + 1, a + 1, a + cols, a + cols + 1);
+        }
       }
     }
   }
@@ -173,10 +171,6 @@ function buildBank(circuit, grassMaps) {
   geo.setAttribute('uv2', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(indices);
   geo.computeVertexNormals();
-  const normals = geo.attributes.normal;
-  for (let i = 0; i < normals.count; i += 1) {
-    if (normals.getY(i) < 0) normals.setXYZ(i, -normals.getX(i), -normals.getY(i), -normals.getZ(i));
-  }
   geo.computeTangents();
   const mesh = new THREE.Mesh(geo, grassMaterial(grassMaps));
   mesh.receiveShadow = true;
@@ -208,14 +202,11 @@ function grassMaterial(maps) {
   });
 }
 
-function ribbon(samples, left, right, leftLift, rightLift, tileMeters = 7) {
+export function ribbon(samples, left, right, leftLift, rightLift, tileMeters = 7) {
   const positions = [];
   const normals = [];
   const uvs = [];
-  const colors = [];
   const indices = [];
-  const gravel = new THREE.Color(0x6d6458);
-  const grass = new THREE.Color(0x5d7a3e);
   const span = Math.abs(right - left) / tileMeters;
   for (let i = 0; i < samples.length; i += 1) {
     const s = samples[i];
@@ -227,14 +218,19 @@ function ribbon(samples, left, right, leftLift, rightLift, tileMeters = 7) {
     normals.push(s.up.x, s.up.y, s.up.z, s.up.x, s.up.y, s.up.z);
     const v = s.distance / tileMeters;
     uvs.push(0, v, span, v);
-    colors.push(gravel.r, gravel.g, gravel.b, grass.r, grass.g, grass.b);
   }
   const rows = samples.length;
   for (let i = 0; i < rows - 1; i += 1) {
     const a = i * 2;
-    indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    // The frame's right vector is up × tangent. With increasing lateral
+    // coordinates the original order faces downward and Three culls the road.
+    if (right > left) {
+      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+    } else {
+      indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
   }
-  return { positions, normals, uvs, colors, indices };
+  return { positions, normals, uvs, indices };
 }
 
 function buildCurbs(circuit) {
@@ -603,7 +599,7 @@ function dashedCenter(samples, material) {
       positions.push(left.x, left.y, left.z, right.x, right.y, right.z);
       normals.push(sample.up.x, sample.up.y, sample.up.z, sample.up.x, sample.up.y, sample.up.z);
     }
-    indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+    indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
