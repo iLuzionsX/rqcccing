@@ -1,103 +1,187 @@
-export function createAudio() {
+import { clamp } from './util.js';
+
+const FILES = [
+  ['engine', '/assets/audio/engine.ogg'],
+  ['squeal', '/assets/audio/squeal.ogg'],
+  ['gravel', '/assets/audio/gravel.ogg'],
+  ['asphalt', '/assets/audio/asphalt.ogg'],
+];
+
+const GEAR_BANDS = [0, 42, 78, 118, 158, 205, 280];
+
+export function loadAudioFiles() {
+  return Promise.all(FILES.map(async ([id, url]) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Missing ${url}`);
+    return [id, await response.arrayBuffer()];
+  }));
+}
+
+export function engineRpm(speed, gear) {
+  const kmh = Math.max(0, speed) * 3.6;
+  const index = Math.min(6, Math.max(1, gear || 1));
+  const span = GEAR_BANDS[index] - GEAR_BANDS[index - 1] || 1;
+  const local = clamp((kmh - GEAR_BANDS[index - 1]) / span, 0, 1);
+  return 0.28 + local * 0.72;
+}
+
+export function surfaceKind(stageId, lateral) {
+  const abs = Math.abs(lateral || 0);
+  if (abs > 6.6) return 'grass';
+  if (abs > 5.9 || stageId === 'ridge') return 'gravel';
+  return 'asphalt';
+}
+
+export function scrubAmount(slip, handbrake, speed) {
+  const slide = Math.min(1, Math.max(0, Math.abs(slip) - 0.08) * 3.4);
+  const locked = handbrake > 0.4 ? 0.85 : 0;
+  const moving = clamp((Math.abs(speed) - 1) / 6, 0, 1);
+  return Math.min(1, Math.max(slide, locked) * moving);
+}
+
+export async function createAudio(encoded) {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
   const ctx = new AudioContext();
   const master = ctx.createGain();
-  master.gain.value = 0.9;
+  master.gain.value = 0.85;
   master.connect(ctx.destination);
 
-  const engine = ctx.createOscillator();
-  const engine2 = ctx.createOscillator();
-  const filter = ctx.createBiquadFilter();
-  const gain = ctx.createGain();
-  engine.type = 'sawtooth';
-  engine2.type = 'triangle';
-  engine2.detune.value = 7;
-  filter.type = 'lowpass';
-  filter.Q.value = 0.7;
-  gain.gain.value = 0;
-  engine.connect(filter);
-  engine2.connect(filter);
-  filter.connect(gain);
-  gain.connect(master);
-  engine.start();
-  engine2.start();
+  const buffers = {};
+  await Promise.all(encoded.map(async ([id, bytes]) => {
+    buffers[id] = await ctx.decodeAudioData(bytes.slice(0));
+  }));
 
-  const wind = ctx.createBufferSource();
-  wind.buffer = noiseBuffer(ctx);
-  wind.loop = true;
-  const windFilter = ctx.createBiquadFilter();
-  windFilter.type = 'lowpass';
-  windFilter.frequency.value = 400;
-  const windGain = ctx.createGain();
-  windGain.gain.value = 0;
-  wind.connect(windFilter);
-  windFilter.connect(windGain);
-  windGain.connect(master);
-  wind.start();
+  const engine = buildEngine(ctx, master, buffers.engine);
+  const tires = buildTires(ctx, master, buffers);
 
-  const scrub = ctx.createBufferSource();
-  scrub.buffer = noiseBuffer(ctx);
-  scrub.loop = true;
-  const scrubFilter = ctx.createBiquadFilter();
-  scrubFilter.type = 'bandpass';
-  scrubFilter.frequency.value = 900;
-  scrubFilter.Q.value = 0.7;
-  const scrubGain = ctx.createGain();
-  scrubGain.gain.value = 0;
-  scrub.connect(scrubFilter);
-  scrubFilter.connect(scrubGain);
-  scrubGain.connect(master);
-  scrub.start();
+  let muted = false;
+  let gear = 1;
 
   return {
     ctx,
     resume() {
       return ctx.resume();
     },
-    update(speed, throttle, gear = 1, slip = 0) {
-      const now = ctx.currentTime;
-      const kmh = Math.max(0, speed) * 3.6;
-      const bands = [0, 42, 78, 118, 158, 205, 280];
-      const index = Math.min(6, Math.max(1, gear));
-      const local = Math.min(1, Math.max(0, (kmh - bands[index - 1]) / (bands[index] - bands[index - 1])));
-      const freq = 44 + local * 96 + (index - 1) * 5;
-      engine.frequency.setTargetAtTime(freq, now, 0.12);
-      engine2.frequency.setTargetAtTime(freq * 0.5, now, 0.12);
-      filter.frequency.setTargetAtTime(220 + local * 1500 + throttle * 700, now, 0.09);
-      gain.gain.setTargetAtTime(0.018 + throttle * 0.03 + local * 0.01, now, 0.08);
-      const rpm = Math.min(1, kmh / 250);
-      windGain.gain.setTargetAtTime(Math.min(0.045, rpm * rpm * 0.055), now, 0.1);
-      windFilter.frequency.setTargetAtTime(280 + rpm * 1900, now, 0.1);
-      const scrub = Math.min(1, Math.max(0, Math.abs(slip) - 0.16) * 2.8);
-      scrubGain.gain.setTargetAtTime(scrub * (0.012 + rpm * 0.03), now, 0.04);
-      scrubFilter.frequency.setTargetAtTime(700 + scrub * 1800, now, 0.05);
+    suspend() {
+      return ctx.suspend();
     },
-    tone(freq, duration, type = 'sine', level = 0.06) {
+    setMuted(next) {
+      muted = !!next;
+      master.gain.setTargetAtTime(muted ? 0 : 0.85, ctx.currentTime, 0.03);
+    },
+    update(state) {
+      const now = ctx.currentTime;
+      const speed = Math.max(0, state.speed || 0);
+      const throttle = clamp(state.throttle || 0, 0, 1);
+      const nextGear = state.gear || 1;
+      const shifted = nextGear !== gear && speed > 4;
+      gear = nextGear;
+      const rpm = engineRpm(speed, gear);
+      engine.render(now, rpm, throttle, shifted);
+      tires.render(now, {
+        speed,
+        surface: state.surface || 'asphalt',
+        scrub: scrubAmount(state.slip || 0, state.handbrake || 0, speed),
+        airborne: !!state.airborne,
+      });
+    },
+    tone(freq, duration, type = 'sine', level = 0.05) {
       const osc = ctx.createOscillator();
-      const g = ctx.createGain();
+      const gain = ctx.createGain();
       osc.type = type;
       osc.frequency.value = freq;
-      osc.connect(g);
-      g.connect(master);
+      osc.connect(gain);
+      gain.connect(master);
       const now = ctx.currentTime;
-      g.gain.setValueAtTime(0.0001, now);
-      g.gain.exponentialRampToValueAtTime(level, now + 0.015);
-      g.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(Math.max(level, 0.0002), now + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
       osc.start(now);
       osc.stop(now + duration + 0.02);
     },
   };
 }
 
-function noiseBuffer(ctx) {
-  const length = ctx.sampleRate * 2;
-  const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  let last = 0;
-  for (let i = 0; i < length; i += 1) {
-    const white = Math.random() * 2 - 1;
-    last = last * 0.96 + white * 0.04;
-    data[i] = last * 3;
-  }
-  return buffer;
+function buildEngine(ctx, master, buffer) {
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 900;
+  filter.Q.value = 0.7;
+  filter.connect(master);
+
+  const source = loop(ctx, buffer);
+  const gain = ctx.createGain();
+  gain.gain.value = 0;
+  source.connect(gain);
+  gain.connect(filter);
+  source.start();
+
+  // Same rate as the main loop, a few cents down, so the note stays one engine.
+  const body = loop(ctx, buffer);
+  const bodyGain = ctx.createGain();
+  bodyGain.gain.value = 0;
+  body.detune.value = -8;
+  body.connect(bodyGain);
+  bodyGain.connect(filter);
+  body.start();
+
+  return {
+    render(now, rpm, throttle, shifted) {
+      const rate = 0.72 + rpm * 0.62 + throttle * 0.04;
+      const glide = shifted ? 0.03 : (throttle > 0.2 ? 0.05 : 0.09);
+      source.playbackRate.setTargetAtTime(rate, now, glide);
+      body.playbackRate.setTargetAtTime(rate, now, glide);
+      const loud = 0.2 + throttle * 0.48 + (1 - throttle) * rpm * 0.12;
+      gain.gain.setTargetAtTime(loud, now, throttle > 0.15 ? 0.04 : 0.07);
+      bodyGain.gain.setTargetAtTime(loud * 0.35, now, 0.08);
+      const open = shifted ? 520 : 640 + rpm * 700 + throttle * 2400;
+      filter.frequency.setTargetAtTime(open, now, shifted ? 0.02 : 0.06);
+    },
+  };
+}
+
+function buildTires(ctx, master, buffers) {
+  const asphalt = loopingGain(ctx, master, buffers.asphalt);
+  const gravel = loopingGain(ctx, master, buffers.gravel);
+  const squeal = loopingGain(ctx, master, buffers.squeal);
+  squeal.filter = ctx.createBiquadFilter();
+  squeal.filter.type = 'bandpass';
+  squeal.filter.frequency.value = 1400;
+  squeal.filter.Q.value = 0.7;
+  squeal.source.disconnect();
+  squeal.source.connect(squeal.filter);
+  squeal.filter.connect(squeal.gain);
+
+  return {
+    render(now, state) {
+      const pace = clamp((state.speed - 1.5) / 22, 0, 1);
+      const rolling = state.airborne ? pace * 0.12 : pace;
+      const onGravel = state.surface === 'gravel' || state.surface === 'grass';
+      const gravelLevel = onGravel ? rolling * (state.surface === 'grass' ? 0.55 : 0.9) : 0;
+      asphalt.gain.gain.setTargetAtTime(onGravel ? 0 : rolling * 0.55, now, 0.08);
+      gravel.gain.gain.setTargetAtTime(gravelLevel + (onGravel ? state.scrub * 0.45 : 0), now, 0.05);
+      asphalt.source.playbackRate.setTargetAtTime(0.85 + pace * 0.45, now, 0.1);
+      gravel.source.playbackRate.setTargetAtTime(0.9 + pace * 0.55, now, 0.1);
+      const squealLevel = state.scrub * (onGravel ? 0.22 : 0.7);
+      squeal.gain.gain.setTargetAtTime(squealLevel, now, 0.04);
+      squeal.source.playbackRate.setTargetAtTime(0.92 + state.scrub * 0.2, now, 0.05);
+    },
+  };
+}
+
+function loopingGain(ctx, master, buffer) {
+  const source = loop(ctx, buffer);
+  const gain = ctx.createGain();
+  gain.gain.value = 0;
+  source.connect(gain);
+  gain.connect(master);
+  source.start();
+  return { source, gain };
+}
+
+function loop(ctx, buffer) {
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.loop = true;
+  return source;
 }

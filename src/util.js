@@ -79,6 +79,6 @@ export function detectQuality() {
     rocks: low ? 40 : 90,
     reflection: low ? 640 : 1024,
     roadSegments: low ? 420 : 640,
-    bloom: true,
+    bloom: !low,
   };
 }

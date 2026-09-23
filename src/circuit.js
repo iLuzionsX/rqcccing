@@ -21,12 +21,17 @@ export function createCircuit(segments = 640, requestedStage = selectedStage()) 
   const points = stage.points;
   const curve = new THREE.CatmullRomCurve3(points, true, 'centripetal', 0.35);
   const raw = sampleCenterline(curve, segments);
-  const samples = smoothBanks(frameSamples(raw));
-  const length = samples[samples.length - 1].distance;
+  let samples = smoothBanks(frameSamples(raw));
+  let length = samples[samples.length - 1].distance;
   const jumps = stage.jumps.map((jump) => ({
     ...jump,
     distance: nearestDistance(samples, points[jump.waypoint]),
   })).sort((a, b) => a.distance - b.distance);
+  if (jumps.length) {
+    raiseCrests(samples, jumps, length);
+    samples = refitFrames(samples, jumps, length);
+    length = samples[samples.length - 1].distance;
+  }
 
   return {
     curve,
@@ -61,8 +66,9 @@ function stageDefinition(stageId) {
       lake: { x: -286, z: 74, radius: 43, y: 0.4 },
       points: ridgePoints(),
       jumps: [
-        { id: 'switchback-drop', waypoint: 7, launchSpeed: 8.1, minSpeed: 13 },
-        { id: 'eagle-crest', waypoint: 16, launchSpeed: 9.2, minSpeed: 15 },
+        // minSpeed gates the lip. The vertical speed comes from the crest slope.
+        { id: 'switchback-drop', waypoint: 12, launchSpeed: 8.1, minSpeed: 13 },
+        { id: 'eagle-crest', waypoint: 22, launchSpeed: 9.2, minSpeed: 15 },
       ],
     };
   }
@@ -74,6 +80,73 @@ function stageDefinition(stageId) {
     points: coastalPoints(),
     jumps: [],
   };
+}
+
+// Height added along a jump, measured from the lip. The approach still
+// points upward at the lip; the landing falls away faster than a car at
+// the jump's minimum speed can follow.
+export function crestLift(along) {
+  const approach = 22;
+  const drop = 16;
+  const tail = 34;
+  const height = 3.4;
+  const dropSlope = 0.26;
+  if (along < -approach || along > drop + tail) return 0;
+  if (along <= 0) {
+    const t = (along + approach) / approach;
+    return height * t * t;
+  }
+  if (along <= drop) return height - dropSlope * along;
+  const t = (along - drop) / tail;
+  const fade = t * t * (3 - 2 * t);
+  return (height - dropSlope * drop) * (1 - fade);
+}
+
+function raiseCrests(samples, jumps, length) {
+  const base = samples.map((sample) => sample.point.y);
+  for (let i = 0; i < samples.length; i += 1) {
+    let lift = 0;
+    for (const jump of jumps) {
+      let along = samples[i].distance - jump.distance;
+      if (along > length * 0.5) along -= length;
+      if (along < -length * 0.5) along += length;
+      lift += crestLift(along);
+    }
+    samples[i].point.y = base[i] + lift;
+  }
+}
+
+function refitFrames(samples, jumps, length) {
+  const n = samples.length - 1;
+  for (let i = 0; i < n; i += 1) {
+    if (!onCrest(samples[i].distance, jumps, length)) continue;
+    const prev = samples[(i - 1 + n) % n].point;
+    const next = samples[(i + 1) % n].point;
+    const raised = next.clone().sub(prev).normalize();
+    const heading = Math.atan2(samples[i].tangent.x, samples[i].tangent.z);
+    const pitch = Math.asin(clamp(raised.y, -0.55, 0.55));
+    const cp = Math.cos(pitch);
+    samples[i].tangent.set(Math.sin(heading) * cp, Math.sin(pitch), Math.cos(heading) * cp);
+  }
+  samples[n].point.copy(samples[0].point);
+  samples[n].tangent.copy(samples[0].tangent);
+  for (let i = 0; i < n; i += 1) {
+    const next = samples[(i + 1) % n].tangent;
+    const tangent = samples[i].tangent;
+    samples[i].curvature = tangent.z * next.x - tangent.x * next.z;
+  }
+  samples[n].curvature = samples[0].curvature;
+  return smoothBanks(samples);
+}
+
+function onCrest(distance, jumps, length) {
+  for (const jump of jumps) {
+    let along = distance - jump.distance;
+    if (along > length * 0.5) along -= length;
+    if (along < -length * 0.5) along += length;
+    if (along >= -26 && along <= 56) return true;
+  }
+  return false;
 }
 
 function nearestDistance(samples, target) {
@@ -91,12 +164,14 @@ function nearestDistance(samples, target) {
 
 function ridgePoints() {
   return [
-    [-175, 5, -235], [-92, 6, -235], [0, 9, -232], [73, 15, -216],
+    [-161.6, 5, -261.2], [-163.5, 5.1, -254.2], [-162.5, 5.2, -246.9],
+    [-158.7, 5.3, -240.7], [-152.7, 5.4, -236.5], [-145.6, 5.5, -235],
+    [-92, 6, -235], [0, 9, -232], [73, 15, -216],
     [112, 25, -170], [118, 34, -100], [91, 42, -42], [42, 46, -26],
-    [6, 43, -62], [35, 34, -101], [-20, 28, -128], [-76, 31, -97],
+    [18, 44, -14], [8, 40, -58], [35, 34, -101], [-20, 28, -128], [-76, 31, -97],
     [-104, 39, -41], [-76, 48, 13], [-22, 53, 33], [34, 57, 21],
-    [82, 63, 47], [137, 61, 34], [179, 54, -5], [165, 47, -53],
-    [121, 40, -81], [145, 31, -128], [163, 22, -180], [122, 13, -238],
+    [82, 63, 47], [112, 62, 64], [168, 56, 20], [179, 54, -5], [165, 47, -53],
+    [190, 42, -88], [188, 32, -145], [163, 22, -180], [122, 13, -238],
     [65, 8, -285], [0, 6, -292], [-86, 5, -290], [-154, 4, -276],
   ].map(([x, y, z]) => new THREE.Vector3(x, y, z));
 }

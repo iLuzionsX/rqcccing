@@ -63,12 +63,15 @@
             <span class="button-arrow" aria-hidden="true">GO</span>
           </button>
           <p class="garage-hint">A / D OR ← / → STEER <span>·</span> W THROTTLE <span>·</span> S BRAKE</p>
+          <button id="open-settings" class="modal-secondary settings-open" type="button">SETTINGS</button>
         </aside>
       </main>
 
       <footer class="menu-footer">
         <span>BUILT FOR THE LONG WAY AROUND</span>
         <span>WEB RALLY SIMULATOR <b>·</b> 2026</span>
+        <span class="car-credit">Rally cars by MuhammadOkky (CC BY 4.0)</span>
+        <span class="car-credit">Engine loop by MarlonHJ (CC0) · Tire squeal by Tom Haigh (CC BY 3.0) · Surfaces adapted from Minetest (CC BY-SA 3.0)</span>
       </footer>
     </section>
 
@@ -82,6 +85,7 @@
           <div class="stat stat-best"><span>BEST LAP</span><strong id="best">--:--.---</strong></div>
         </div>
         <div class="hud-actions">
+          <button id="mute" class="hud-action" type="button" aria-label="Mute sound">SOUND</button>
           <button id="camera-toggle" class="hud-action" type="button" aria-label="Change camera view">CAMERA <span id="camera-mode">CHASE · C</span></button>
           <button id="pause-toggle" class="hud-action hud-pause" type="button" aria-label="Pause race">PAUSE <span>P</span></button>
         </div>
@@ -121,6 +125,7 @@
         <button id="resume" class="drive modal-primary" type="button"><span>RESUME RACE</span><span class="button-arrow" aria-hidden="true">P</span></button>
         <button id="restart-stage" class="modal-secondary" type="button">RESTART STAGE</button>
         <button id="back-menu" class="modal-secondary" type="button">BACK TO GARAGE</button>
+        <button id="pause-settings" class="modal-secondary" type="button">SETTINGS</button>
         <p class="modal-footnote">RESUME WITH <b>P</b></p>
       </article>
     </section>
@@ -133,6 +138,7 @@
         <div class="finish-summary">
           <div><span>YOUR RESULT</span><strong id="finish-place">—</strong></div>
           <div><span>FINISH TIME</span><strong id="finish-time">--:--.---</strong></div>
+          <div class="finish-best"><span>BEST LAP</span><strong id="finish-best">--:--.---</strong></div>
         </div>
         <div class="standings-heading"><span>FINAL CLASSIFICATION</span><span>TIME</span></div>
         <div id="result-body"></div>
@@ -141,7 +147,28 @@
           <button id="results-menu" class="modal-secondary" type="button">BACK TO GARAGE</button>
         </div>
       </article>
+      <footer class="menu-footer result-footer">
+        <span class="car-credit">Rally cars by MuhammadOkky (CC BY 4.0)</span>
+        <span class="car-credit">Engine loop by MarlonHJ (CC0) · Tire squeal by Tom Haigh (CC BY 3.0) · Surfaces adapted from Minetest (CC BY-SA 3.0)</span>
+      </footer>
     </section>
+
+    <section id="settings" class="screen modal-screen hidden" aria-label="Settings" aria-modal="true" role="dialog">
+      <article class="modal-card">
+        <p class="eyebrow">ON THIS DEVICE</p>
+        <h2>SETTINGS</h2>
+        <p class="modal-copy">Drag the wheel, gas, brake, and handbrake to where your hands sit. The layout is saved here until you reset it.</p>
+        <button id="arrange-controls" class="drive modal-primary" type="button"><span>MOVE CONTROLS</span></button>
+        <button id="reset-layout" class="modal-secondary" type="button">RESET LAYOUT</button>
+        <button id="close-settings" class="modal-secondary" type="button">CLOSE</button>
+      </article>
+    </section>
+
+    <div id="arrange-bar" class="hidden" role="dialog" aria-label="Move driving controls">
+      <p>Drag the wheel, gas, brake, or handbrake. They stay on screen.</p>
+      <button id="arrange-reset" type="button">RESET</button>
+      <button id="arrange-done" type="button">DONE</button>
+    </div>
 
     <div id="touch" aria-label="Touch driving controls">
       <div id="wheel" role="slider" aria-label="Steering wheel" aria-valuemin="-1" aria-valuemax="1" aria-valuenow="0" aria-valuetext="Centered">
@@ -156,6 +183,7 @@
       </div>
       <button id="brake" type="button" aria-label="Brake">BRAKE</button>
       <button id="gas" type="button" aria-label="Throttle">GAS</button>
+      <button id="handbrake" type="button" aria-label="Handbrake">HB</button>
     </div>
 
     <script>
