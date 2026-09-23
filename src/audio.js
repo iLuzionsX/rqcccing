@@ -106,42 +106,36 @@ function buildEngine(ctx, master, buffer) {
   const filter = ctx.createBiquadFilter();
   filter.type = 'lowpass';
   filter.frequency.value = 900;
-  filter.Q.value = 0.65;
+  filter.Q.value = 0.7;
   filter.connect(master);
 
-  const layers = [
-    { rate: (rpm) => 0.64 + rpm * 0.16, weight: (rpm) => clamp(1 - rpm * 1.55, 0, 1) },
-    { rate: (rpm) => 0.86 + rpm * 0.26, weight: (rpm) => clamp(1 - Math.abs(rpm - 0.52) * 2.3, 0, 1) },
-    { rate: (rpm) => 1.05 + rpm * 0.38, weight: (rpm) => clamp((rpm - 0.38) * 1.9, 0, 1) },
-  ].map((layer) => {
-    const source = loop(ctx, buffer);
-    const gain = ctx.createGain();
-    gain.gain.value = 0;
-    source.connect(gain);
-    gain.connect(filter);
-    source.start();
-    return { ...layer, source, gain };
-  });
+  const source = loop(ctx, buffer);
+  const gain = ctx.createGain();
+  gain.gain.value = 0;
+  source.connect(gain);
+  gain.connect(filter);
+  source.start();
 
+  // Same rate as the main loop, a few cents down, so the note stays one engine.
   const body = loop(ctx, buffer);
   const bodyGain = ctx.createGain();
   bodyGain.gain.value = 0;
-  body.detune.value = -12;
+  body.detune.value = -8;
   body.connect(bodyGain);
   bodyGain.connect(filter);
   body.start();
 
   return {
     render(now, rpm, throttle, shifted) {
-      const loud = 0.16 + throttle * 0.42 + (1 - throttle) * (0.08 + rpm * 0.1);
-      for (const layer of layers) {
-        layer.source.playbackRate.setTargetAtTime(layer.rate(rpm), now, 0.08);
-        layer.gain.gain.setTargetAtTime(layer.weight(rpm) * loud, now, throttle > 0.2 ? 0.06 : 0.04);
-      }
-      body.playbackRate.setTargetAtTime(0.7 + rpm * 0.22, now, 0.1);
-      bodyGain.gain.setTargetAtTime(loud * 0.28, now, 0.08);
-      const open = shifted ? 480 : 520 + rpm * 1500 + throttle * 1600;
-      filter.frequency.setTargetAtTime(open, now, shifted ? 0.02 : 0.07);
+      const rate = 0.72 + rpm * 0.62 + throttle * 0.04;
+      const glide = shifted ? 0.03 : (throttle > 0.2 ? 0.05 : 0.09);
+      source.playbackRate.setTargetAtTime(rate, now, glide);
+      body.playbackRate.setTargetAtTime(rate, now, glide);
+      const loud = 0.2 + throttle * 0.48 + (1 - throttle) * rpm * 0.12;
+      gain.gain.setTargetAtTime(loud, now, throttle > 0.15 ? 0.04 : 0.07);
+      bodyGain.gain.setTargetAtTime(loud * 0.35, now, 0.08);
+      const open = shifted ? 520 : 640 + rpm * 700 + throttle * 2400;
+      filter.frequency.setTargetAtTime(open, now, shifted ? 0.02 : 0.06);
     },
   };
 }
