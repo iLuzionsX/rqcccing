@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import { clamp } from './util.js';
 import { BANK_OUTER, surfaceHeight, vergeDrop } from './ground.js';
+import { buildRidgeCourse } from './ridge.js';
 
 export function createTrack(scene, circuit, textures) {
+  const ridge = circuit.stageId === 'ridge';
   const road = buildRoad(circuit, textures);
   scene.add(road);
 
@@ -12,20 +14,17 @@ export function createTrack(scene, circuit, textures) {
   const bank = buildBank(circuit, textures.grass);
   scene.add(bank);
 
-  const curbs = buildCurbs(circuit);
-  scene.add(curbs);
-
-  const barriers = buildBarriers(circuit);
-  scene.add(barriers.mesh);
-
-  const lamps = buildLamps(circuit);
-  scene.add(lamps);
+  if (!ridge) {
+    scene.add(buildCurbs(circuit));
+    const barriers = buildBarriers(circuit);
+    scene.add(barriers.mesh);
+    scene.add(buildLamps(circuit));
+  }
 
   const gantry = buildGantry(circuit);
   scene.add(gantry.group);
 
-  const crowd = buildGrandstand(circuit);
-  scene.add(crowd);
+  if (!ridge) scene.add(buildGrandstand(circuit));
 
   const dressing = buildDressing(circuit);
   scene.add(dressing.group);
@@ -60,22 +59,37 @@ function buildRoad(circuit, textures) {
   geo.setIndex(indices);
   geo.computeTangents();
 
-  const material = new THREE.MeshPhysicalMaterial({
-    map: textures.asphalt.map,
-    normalMap: textures.asphalt.normalMap,
-    normalScale: new THREE.Vector2(0.65, 0.65),
-    roughnessMap: textures.asphalt.roughnessMap,
-    aoMap: textures.asphalt.aoMap,
-    aoMapIntensity: 0.85,
-    roughness: 0.62,
-    metalness: 0.04,
-    clearcoat: 0.28,
-    clearcoatRoughness: 0.22,
-    envMapIntensity: 1.15,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
-  });
+  const surface = circuit.stageId === 'ridge' ? textures.gravel : textures.asphalt;
+  const material = circuit.stageId === 'ridge'
+    ? new THREE.MeshStandardMaterial({
+      map: surface.map,
+      normalMap: surface.normalMap,
+      normalScale: new THREE.Vector2(0.8, 0.8),
+      roughnessMap: surface.roughnessMap,
+      color: 0x8f877c,
+      roughness: 0.96,
+      metalness: 0,
+      envMapIntensity: 0.2,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    })
+    : new THREE.MeshPhysicalMaterial({
+      map: surface.map,
+      normalMap: surface.normalMap,
+      normalScale: new THREE.Vector2(0.65, 0.65),
+      roughnessMap: surface.roughnessMap,
+      aoMap: surface.aoMap,
+      aoMapIntensity: 0.85,
+      roughness: 0.62,
+      metalness: 0.04,
+      clearcoat: 0.28,
+      clearcoatRoughness: 0.22,
+      envMapIntensity: 1.15,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    });
   const mesh = new THREE.Mesh(geo, material);
   mesh.receiveShadow = true;
   mesh.castShadow = false;
@@ -110,6 +124,7 @@ function buildShoulders(circuit, textures) {
       normalMap: textures.gravel.normalMap,
       normalScale: new THREE.Vector2(0.8, 0.8),
       roughnessMap: textures.gravel.roughnessMap,
+      color: circuit.stageId === 'ridge' ? 0x9a8d78 : 0xffffff,
       roughness: 1,
       metalness: 0,
       envMapIntensity: 0.35,
@@ -123,7 +138,8 @@ function buildShoulders(circuit, textures) {
 }
 
 function buildBank(circuit, grassMaps) {
-  const rings = [11.45, 16.4, 22.2, BANK_OUTER];
+  const outer = circuit.bankOuter || BANK_OUTER;
+  const rings = circuit.stageId === 'ridge' ? [11.5, 14.1, outer] : [11.45, 16.4, 22.2, BANK_OUTER];
   const samples = circuit.samples;
   const positions = [];
   const uvs = [];
@@ -355,7 +371,7 @@ function buildGantry(circuit) {
   ctx.font = '600 78px Oswald, Arial Narrow, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('RQCCCING', 512, 86);
+  ctx.fillText(circuit.stageId === 'ridge' ? 'RIDGEBREAK RALLY' : 'RQCCCING', 512, 86);
   const signMap = new THREE.CanvasTexture(canvas);
   signMap.colorSpace = THREE.SRGBColorSpace;
   const sign = new THREE.Mesh(
@@ -429,27 +445,34 @@ function crowdTexture() {
 function buildDressing(circuit) {
   const group = new THREE.Group();
   const flags = [];
-  const messages = ['GOLDEN HOUR', 'HOLD THE APEX', 'RQCCCING'];
-  messages.forEach((text, index) => {
-    const s = circuit.atDistance(180 + index * 260);
-    const board = new THREE.Mesh(
-      new THREE.PlaneGeometry(7.2, 1.6),
-      new THREE.MeshStandardMaterial({ map: labelTexture(text), roughness: 0.55, metalness: 0.08 }),
-    );
-    const at = s.point.clone().addScaledVector(s.right, -13.2);
-    board.position.set(at.x, surfaceHeight(at.x, at.z, circuit) + 2.35, at.z);
-    faceRoad(board, s, -1);
-    group.add(board);
-  });
+  const ridge = circuit.stageId === 'ridge';
+  if (!ridge) {
+    ['GOLDEN HOUR', 'HOLD THE APEX', 'RQCCCING'].forEach((text, index) => {
+      const s = circuit.atDistance(180 + index * 260);
+      const board = new THREE.Mesh(
+        new THREE.PlaneGeometry(7.2, 1.6),
+        new THREE.MeshStandardMaterial({ map: labelTexture(text), roughness: 0.55, metalness: 0.08 }),
+      );
+      const at = s.point.clone().addScaledVector(s.right, -13.2);
+      board.position.set(at.x, surfaceHeight(at.x, at.z, circuit) + 2.35, at.z);
+      faceRoad(board, s, -1);
+      group.add(board);
+    });
+  }
 
-  for (let i = 0; i < 6; i += 1) {
-    const s = circuit.atDistance(8 + i * 3.2);
-    const flag = makeFlag(i % 2 === 0 ? 0xc41818 : 0xf4f4f4);
-    flag.mesh.position.copy(s.point).addScaledVector(s.right, 10.2).addScaledVector(s.up, 1.85);
-    flag.mesh.position.y -= vergeDrop(10.2);
-    orient(flag.mesh, s);
-    group.add(flag.mesh);
-    flags.push(flag);
+  const sides = ridge ? [-1, 1] : [1];
+  const flagCount = ridge ? 7 : 6;
+  for (const side of sides) {
+    for (let i = 0; i < flagCount; i += 1) {
+      const s = circuit.atDistance(6 + i * 3.4);
+      const flag = makeFlag(i % 2 === 0 ? 0xc41818 : 0xf4f4f4);
+      const lateral = side * 10.2;
+      flag.mesh.position.copy(s.point).addScaledVector(s.right, lateral).addScaledVector(s.up, 1.85);
+      flag.mesh.position.y -= vergeDrop(Math.abs(lateral));
+      orient(flag.mesh, s);
+      group.add(flag.mesh);
+      flags.push(flag);
+    }
   }
 
   return {
@@ -513,6 +536,7 @@ function makeFlag(hex) {
 }
 
 function buildMarkings(circuit) {
+  if (circuit.stageId === 'ridge') return buildRidgeCourse(circuit);
   const material = new THREE.MeshStandardMaterial({
     color: 0xf7f4ee,
     roughness: 0.38,

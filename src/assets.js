@@ -30,13 +30,14 @@ async function loadMapSet(loader, name, anisotropy, maps) {
   return Object.fromEntries(entries);
 }
 
-export async function loadGameAssets(renderer) {
+export async function loadGameAssets(renderer, stageId = 'coast') {
   const anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const textures = new THREE.TextureLoader();
   const gltfLoader = new GLTFLoader();
   const rgbe = new RGBELoader();
+  const ridgeModel = (path) => (stageId === 'ridge' ? gltfLoader.loadAsync(assetUrl(path)) : Promise.resolve(null));
 
-  const [hdr, asphalt, gravel, grass, tree, shrubA, shrubB, grassPatch, rock, boulder, flower, rally] = await Promise.all([
+  const [hdr, asphalt, gravel, grass, tree, shrubA, shrubB, grassPatch, rock, boulder, flower, rally, fir, pine, grassTuft, moss, stump, trunk, crate, face] = await Promise.all([
     rgbe.loadAsync(assetUrl('hdri/kiara_1_dawn_2k.hdr')),
     loadMapSet(textures, 'asphalt', anisotropy, [['map', 'diff', true], ['normalMap', 'nor', false], ['roughnessMap', 'rough', false], ['aoMap', 'ao', false]]),
     loadMapSet(textures, 'gravel', anisotropy, [['map', 'diff', true], ['normalMap', 'nor', false], ['roughnessMap', 'rough', false]]),
@@ -49,6 +50,14 @@ export async function loadGameAssets(renderer) {
     gltfLoader.loadAsync(assetUrl('models/boulder/boulder_01_1k.gltf')),
     gltfLoader.loadAsync(assetUrl('models/flower/flower_gazania_1k.gltf')),
     gltfLoader.loadAsync(assetUrl('models/rally/scene.gltf')),
+    ridgeModel('models/fir/fir_sapling.glb'),
+    ridgeModel('models/pine/pine_sapling.glb'),
+    ridgeModel('models/grass_tuft/grass_medium_01_1k.gltf'),
+    ridgeModel('models/rock_moss/rock_moss.glb'),
+    ridgeModel('models/tree_stump/tree_stump.glb'),
+    ridgeModel('models/dead_trunk/dead_tree_trunk.glb'),
+    ridgeModel('models/crate/wooden_crate_01_1k.gltf'),
+    ridgeModel('models/rock_face/rock_face.glb'),
   ]);
 
   hdr.mapping = THREE.EquirectangularReflectionMapping;
@@ -64,6 +73,7 @@ export async function loadGameAssets(renderer) {
     gravel,
     grass,
     props: { tree, shrubA, shrubB, grassPatch, rock, boulder, flower },
+    ridge: stageId === 'ridge' ? { fir, pine, grass: grassTuft, moss, stump, trunk, crate, face } : null,
     rally,
   };
 }

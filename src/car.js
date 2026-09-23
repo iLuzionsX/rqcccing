@@ -115,12 +115,13 @@ export function syncCar(model, vehicle, sample, dt, input) {
   _up.set(frame.up.x, frame.up.y, frame.up.z);
   _basis.makeBasis(_right, _up, _nose);
   model.root.quaternion.setFromRotationMatrix(_basis);
-  model.root.position.set(vehicle.x, sample.height + 0.02, vehicle.z);
+  model.root.position.set(vehicle.x, vehicle.airborne ? vehicle.airY : sample.height + 0.02, vehicle.z);
 
   const throttle = input.throttle || 0;
   const brake = input.brake || 0;
   const steer = input.steer || 0;
-  const targetPitch = clamp(-(vehicle.longG || 0) * 0.026, -0.11, 0.09);
+  let targetPitch = clamp(-(vehicle.longG || 0) * 0.026, -0.11, 0.09);
+  if (vehicle.airborne) targetPitch = vehicle.airVelocity > 0 ? -0.08 : 0.045;
   const targetRoll = clamp((vehicle.latG || 0) * 0.04, -0.14, 0.14);
   model.pitch = damp(model.pitch, targetPitch, 3.1, dt);
   model.roll = damp(model.roll, targetRoll, 2.7, dt);
@@ -128,6 +129,10 @@ export function syncCar(model, vehicle, sample, dt, input) {
   model.chassis.rotation.z = model.roll;
 
   const curb = Math.abs(sample.lateral) > 5.5 && Math.abs(sample.lateral) < 6.7 && Math.abs(vehicle.speed) > 10;
+  if (vehicle.bumpImpulse > 0) {
+    model.bumpVel += vehicle.bumpImpulse * 2.4;
+    vehicle.bumpImpulse = 0;
+  }
   if (curb) model.bumpVel += 9 * dt;
   model.bumpVel += (-model.bump * 52 - model.bumpVel * 6.5) * dt;
   model.bump += model.bumpVel * dt;

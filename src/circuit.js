@@ -16,19 +16,37 @@ export const LAKE = {
   y: 0.4,
 };
 
-export function createCircuit(segments = 640) {
-  const points = stagePoints();
+export function createCircuit(segments = 640, requestedStage = selectedStage()) {
+  const stage = stageDefinition(requestedStage);
+  const points = stage.points;
   const curve = new THREE.CatmullRomCurve3(points, true, 'centripetal', 0.35);
   const raw = sampleCenterline(curve, segments);
-  const samples = smoothBanks(frameSamples(raw));
-  const length = samples[samples.length - 1].distance;
+  let samples = smoothBanks(frameSamples(raw));
+  let length = samples[samples.length - 1].distance;
+  const jumps = stage.jumps.map((jump) => ({
+    ...jump,
+    distance: nearestDistance(samples, points[jump.waypoint]),
+  })).sort((a, b) => a.distance - b.distance);
+  if (jumps.length) {
+    raiseCrests(samples, jumps, length);
+    samples = refitFrames(samples);
+    length = samples[samples.length - 1].distance;
+  }
+  const centroid = loopCentroid(samples);
+  const lake = stage.id === 'ridge' ? placeTarn(samples, centroid, length) : stage.lake;
 
   return {
     curve,
     samples,
     length,
     halfWidth: 6,
-    lake: LAKE,
+    bankOuter: stage.id === 'ridge' ? 16.8 : 29,
+    stageId: stage.id,
+    stageName: stage.name,
+    stageDescription: stage.description,
+    centroid,
+    lake,
+    jumps,
     query(x, z) {
       return querySamples(samples, x, z);
     },
@@ -38,7 +56,157 @@ export function createCircuit(segments = 640) {
   };
 }
 
-function stagePoints() {
+function selectedStage() {
+  if (typeof globalThis.location === 'undefined') return 'coast';
+  return new URLSearchParams(globalThis.location.search).get('stage') || 'coast';
+}
+
+function stageDefinition(stageId) {
+  if (stageId === 'ridge') {
+    return {
+      id: 'ridge',
+      name: 'Ridgebreak Rally',
+      description: 'A high-country gravel loop. Two switchbacks, a tarn beside the service straight, and crests that launch the car.',
+      lake: null,
+      points: ridgePoints(),
+      jumps: [
+        { id: 'switchback-drop', waypoint: 8, launchSpeed: 8.2, minSpeed: 11 },
+        { id: 'eagle-crest', waypoint: 12, launchSpeed: 9.1, minSpeed: 12 },
+      ],
+    };
+  }
+  return {
+    id: 'coast',
+    name: 'Golden Hour GP',
+    description: 'Three laps around a wet coastal circuit. The sun is low, the lake is glass, and the asphalt still holds the rain.',
+    lake: LAKE,
+    points: coastalPoints(),
+    jumps: [],
+  };
+}
+
+function nearestDistance(samples, target) {
+  let distance = 0;
+  let best = Infinity;
+  for (let i = 0; i < samples.length - 1; i += 1) {
+    const candidate = samples[i].point.distanceToSquared(target);
+    if (candidate < best) {
+      best = candidate;
+      distance = samples[i].distance;
+    }
+  }
+  return distance;
+}
+
+function ridgePoints() {
+  // South service straight, an east climb into a hairpin, a high crest,
+  // then a west descent. The finish is a quarter-circle so the loop closes
+  // on the same heading instead of folding back over the straight.
+  const pts = [
+    [-220, 8.0, -188], [-140, 8.5, -186], [-55, 11.2, -180], [28, 16, -168],
+    [108, 23, -140], [162, 31, -88], [186, 39, -22], [162, 47, 42],
+    [108, 52, 88], [42, 47, 118], [-8, 52, 162], [-48, 59, 198],
+    [-112, 63, 176], [-162, 56, 128], [-196, 46, 68], [-200, 34, 8],
+    [-186, 26, -48], [-178, 21, -92], [-250, 16.5, -104],
+  ];
+  const radius = 76;
+  const exitX = -268;
+  const exitZ = -188;
+  const cx = exitX;
+  const cz = exitZ + radius;
+  const arc = [
+    [Math.PI, 13.5],
+    [Math.PI * 1.25, 10.4],
+    [Math.PI * 1.5, 8.2],
+  ];
+  for (const [theta, y] of arc) {
+    pts.push([cx + radius * Math.cos(theta), y, cz + radius * Math.sin(theta)]);
+  }
+  return pts.map(([x, y, z]) => new THREE.Vector3(x, y, z));
+}
+
+function raiseCrests(samples, jumps, length) {
+  const base = samples.map((sample) => sample.point.y);
+  for (let i = 0; i < samples.length; i += 1) {
+    let lift = 0;
+    for (const jump of jumps) {
+      let along = samples[i].distance - jump.distance;
+      if (along > length * 0.5) along -= length;
+      if (along < -length * 0.5) along += length;
+      lift += crestOffset(along);
+    }
+    samples[i].point.y = base[i] + lift;
+  }
+}
+
+function crestOffset(along) {
+  if (along < -28 || along > 50) return 0;
+  if (along <= 0) {
+    const t = (along + 28) / 28;
+    return 2.15 * t * t * (3 - 2 * t);
+  }
+  if (along <= 24) {
+    const t = along / 24;
+    return 2.15 - 3.25 * t * t;
+  }
+  const t = (along - 24) / 26;
+  const fade = t * t * (3 - 2 * t);
+  return -1.1 * (1 - fade);
+}
+
+function refitFrames(samples) {
+  const n = samples.length - 1;
+  for (let i = 0; i < n; i += 1) {
+    const prev = samples[(i - 1 + n) % n].point;
+    const next = samples[(i + 1) % n].point;
+    samples[i].tangent.copy(next).sub(prev).normalize();
+  }
+  samples[n].point.copy(samples[0].point);
+  samples[n].tangent.copy(samples[0].tangent);
+  for (let i = 0; i < n; i += 1) {
+    const next = samples[(i + 1) % n].tangent;
+    const tangent = samples[i].tangent;
+    samples[i].curvature = tangent.z * next.x - tangent.x * next.z;
+  }
+  samples[n].curvature = samples[0].curvature;
+  return smoothBanks(samples);
+}
+
+function loopCentroid(samples) {
+  const centroid = new THREE.Vector3();
+  const n = samples.length - 1;
+  for (let i = 0; i < n; i += 1) centroid.add(samples[i].point);
+  return centroid.multiplyScalar(1 / n);
+}
+
+function placeTarn(samples, centroid, length) {
+  const radius = 28;
+  let best = null;
+  for (const along of [48, 110, 175]) {
+    const spot = sampleByDistance(samples, length, along);
+    const centerSide = spot.right.x * (centroid.x - spot.point.x) + spot.right.z * (centroid.z - spot.point.z);
+    const outside = centerSide >= 0 ? -1 : 1;
+    for (const offset of [64, 78, 96]) {
+      const x = spot.point.x + spot.right.x * outside * offset;
+      const z = spot.point.z + spot.right.z * outside * offset;
+      let nearest = Infinity;
+      for (let i = 0; i < samples.length - 1; i += 2) {
+        nearest = Math.min(nearest, Math.hypot(samples[i].point.x - x, samples[i].point.z - z));
+      }
+      if (nearest < radius + 24) continue;
+      const score = offset + Math.abs(along - 110) * 0.15;
+      if (!best || score < best.score) best = { x, z, nearest, y: spot.point.y, score };
+    }
+  }
+  return {
+    x: best.x,
+    z: best.z,
+    radius,
+    y: Math.max(2.4, best.y - 2.6),
+  };
+}
+
+function coastalPoints() {
   const sh = Math.sin(HEADING);
   const ch = Math.cos(HEADING);
   const local = [];

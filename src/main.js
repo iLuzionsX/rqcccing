@@ -85,7 +85,7 @@ hud.again.addEventListener('click', () => begin(true));
 window.addEventListener('resize', resize);
 
 const clock = new THREE.Clock();
-loadGameAssets(renderer).then((assets) => {
+loadGameAssets(renderer, circuit.stageId).then((assets) => {
   models = race.cars.map((_, index) => {
     const model = createCar(assets.rally, RALLY_CARS[index]);
     scene.add(model.root);
@@ -284,9 +284,47 @@ function applyShot() {
   } else if (shot === 'beauty') {
     const lake = circuit.lake;
     const sample = circuit.atDistance(circuit.length * 0.18);
-    camera.position.set(lake.x + 70, 18, lake.z + 24);
+    camera.position.set(lake.x + 70, circuit.stageId === 'ridge' ? 28 : 18, lake.z + 24);
     camera.lookAt(sample.point.x, sample.point.y + 2, sample.point.z);
     camera.fov = 46;
+  } else if (shot === 'overview') {
+    const samples = circuit.samples;
+    let sx = 0;
+    let sz = 0;
+    let sy = 0;
+    const count = samples.length - 1;
+    for (let i = 0; i < count; i += 1) {
+      sx += samples[i].point.x;
+      sy += samples[i].point.y;
+      sz += samples[i].point.z;
+    }
+    camera.position.set(sx / count, 210, sz / count + 150);
+    camera.lookAt(sx / count, sy / count, sz / count);
+    camera.fov = 48;
+  } else if (shot === 'section') {
+    const sample = circuit.atDistance(Number(params.get('at') || 0));
+    const side = Number(params.get('side') || 1);
+    camera.position.set(
+      sample.point.x + sample.right.x * side * 14 - sample.tangent.x * 12,
+      sample.point.y + 5.5,
+      sample.point.z + sample.right.z * side * 14 - sample.tangent.z * 12,
+    );
+    camera.lookAt(
+      sample.point.x + sample.tangent.x * 16,
+      sample.point.y + 1.1,
+      sample.point.z + sample.tangent.z * 16,
+    );
+    camera.fov = 48;
+  } else if (shot === 'jump' && circuit.jumps?.length) {
+    const jump = circuit.jumps[Number(params.get('jump') || 0)] || circuit.jumps[0];
+    const sample = circuit.atDistance(jump.distance - 6);
+    camera.position.set(
+      sample.point.x + sample.right.x * 18,
+      sample.point.y + 7,
+      sample.point.z + sample.right.z * 18,
+    );
+    camera.lookAt(sample.point.x, sample.point.y + 1.2, sample.point.z);
+    camera.fov = 42;
   }
   camera.updateProjectionMatrix();
 }
@@ -374,6 +412,10 @@ function bindInput() {
       player.vz = Math.cos(player.heading) * player.speed;
       player.yawRate = 0;
       player.slip = 0;
+      player.airborne = false;
+      player.airY = sample.height + 0.02;
+      player.airVelocity = 0;
+      player.bumpImpulse = 0;
       player.compass = orientCompass(player.heading, sample.up);
     }
   });

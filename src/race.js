@@ -71,6 +71,7 @@ function aiInput(car, cars, circuit, dt) {
     kappa = Math.max(kappa, pathCurvature(circuit, car.distance + aheadOf));
   }
   let target = kappa > 0.00045 ? clamp(Math.sqrt(4.3 / kappa), 18, 38) : 38;
+  if (circuit.stageId === 'ridge') target = Math.min(target, kappa > 0.01 ? 20 : 34);
   if ((aim.tangent?.y || 0) > 0.05) target -= 2;
   if (Math.abs(sample.lateral) > 5.2) target = Math.min(target, 16);
   if (blocked) target = Math.min(target, 20);
