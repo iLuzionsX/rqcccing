@@ -287,6 +287,14 @@ button:focus-visible, a:focus-visible, [role="slider"]:focus-visible {
 .result-actions .modal-secondary { margin-top: 10px; text-align: center; }
 
 #touch { z-index: 3; display: none; }
+body.arranging #touch,
+body.driving.has-custom-layout #touch { display: block; }
+body.arranging #touch { z-index: 8; }
+.settings-open { width: 100%; margin-top: 12px; text-align: left; pointer-events: auto; }
+#arrange-bar { position: fixed; z-index: 9; top: max(16px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; width: min(560px, calc(100% - 24px)); padding: 12px 14px; border: 1px solid rgba(246, 242, 233, 0.24); background: rgba(13, 16, 17, 0.88); pointer-events: auto; }
+#arrange-bar p { margin: 0; color: var(--paper); font-size: 13px; letter-spacing: 0.02em; }
+#arrange-bar button { min-height: 36px; padding: 0 14px; border: 1px solid rgba(246, 242, 233, 0.4); background: transparent; color: var(--paper); cursor: pointer; font: 600 11px/1 var(--font-display); letter-spacing: 0.14em; pointer-events: auto; }
+#arrange-done { border-color: rgba(240, 164, 90, 0.8); color: var(--amber-soft); }
 #wheel { position: absolute; left: max(20px, env(safe-area-inset-left)); bottom: max(18px, env(safe-area-inset-bottom)); display: grid; width: 148px; height: 148px; place-items: center; pointer-events: auto; touch-action: none; }
 .wheel-name { position: absolute; top: -13px; left: 50%; transform: translateX(-50%); color: rgba(246, 242, 233, 0.72); font-size: 8px; font-weight: 600; letter-spacing: 0.22em; }
 #wheel-rotor { position: relative; width: 100%; height: 100%; border: 8px solid rgba(246, 242, 233, 0.79); border-radius: 50%; background: rgba(12, 15, 16, 0.56); box-shadow: inset 0 0 0 2px rgba(240, 164, 90, 0.42), 0 9px 24px rgba(0, 0, 0, 0.35); backdrop-filter: blur(7px); }

@@ -203,6 +203,11 @@ function substep(vehicle, circuit, h, input, length) {
   vLong += (aLong + vLat * vehicle.yawRate) * h;
   vLat += (aLat - vLong * vehicle.yawRate) * h;
   vehicle.yawRate += yawAcc * h;
+  if (vehicle.airborne) {
+    // Enough yaw to point the nose at a landing while the tires are off the ground.
+    const airYaw = input.steer * 1.15 - vehicle.yawRate * 0.55;
+    vehicle.yawRate += airYaw * h;
+  }
 
   const slipMag = Math.max(Math.abs(slipF), Math.abs(slipR));
   const settled = clamp((0.1 - slipMag) / 0.1, 0, 1);

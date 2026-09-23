@@ -47,6 +47,7 @@ export function createRace(circuit) {
 function aiInput(car, cars, circuit, dt) {
   const sample = circuit.query(car.x, car.z);
   const speed = Math.max(car.speed, 0);
+  const ridge = circuit.stageId === 'ridge';
   const blocked = cars.some((other) => {
     if (other === car) return false;
     const dx = other.x - car.x;
@@ -55,49 +56,73 @@ function aiInput(car, cars, circuit, dt) {
     const side = Math.abs(-Math.cos(car.heading) * dx + Math.sin(car.heading) * dz);
     return forward > 0.5 && forward < 9 && side < 2.3;
   });
-  if (blocked) car.lane = car.lane > 0 ? -2.15 : 2.15;
+  if (blocked) car.lane = car.lane > 0 ? (ridge ? -1.15 : -2.15) : (ridge ? 1.15 : 2.15);
 
-  const steerLook = 20 + speed * 0.5;
-  const aim = circuit.atDistance(car.distance + steerLook);
-  const aimX = aim.point.x + (aim.right?.x || 0) * car.lane;
-  const aimZ = aim.point.z + (aim.right?.z || 0) * car.lane;
-  const diff = wrapPi(Math.atan2(aimX - car.x, aimZ - car.z) - car.heading);
-  const rawSteer = clamp(diff * 2.6 - (car.yawRate || 0) * 0.2, -1, 1);
-  car.aiSteer = damp(car.aiSteer || 0, rawSteer, 12, dt || 1 / 60);
-
-  const ridge = circuit.stageId === 'ridge';
   let kappa = 0;
-  const brakeLook = 28 + speed * 1.7;
-  for (let aheadOf = 10; aheadOf <= brakeLook; aheadOf += 14) {
-    kappa = Math.max(kappa, pathCurvature(circuit, car.distance + aheadOf));
+  const brakeLook = ridge ? 26 + speed * 1.35 : 28 + speed * 1.7;
+  const brakeStep = ridge ? 5 : 14;
+  for (let aheadOf = ridge ? 3 : 10; aheadOf <= brakeLook; aheadOf += brakeStep) {
+    kappa = Math.max(kappa, pathCurvature(circuit, car.distance + aheadOf, ridge ? 8 : 18));
   }
+  const lane = ridge ? clamp(car.lane, -1.35, 1.35) * (kappa > 0.07 ? 0.15 : 1) : car.lane;
+  const steerLook = ridge ? clamp(5.5 + speed * 0.12, 5.5, 11) : 20 + speed * 0.5;
+  const aim = circuit.atDistance(car.distance + steerLook);
+  const aimX = aim.point.x + (aim.right?.x || 0) * lane;
+  const aimZ = aim.point.z + (aim.right?.z || 0) * lane;
+  const diff = wrapPi(Math.atan2(aimX - car.x, aimZ - car.z) - car.heading);
+  let rawSteer;
+  if (ridge) {
+    const road = Math.atan2(aim.tangent.x, aim.tangent.z);
+    const headingError = wrapPi(road - car.heading);
+    const latErr = sample.lateral - lane;
+    rawSteer = headingError * 1.35 - Math.atan2(latErr * 1.1, Math.max(speed, 7)) - (car.yawRate || 0) * 0.85;
+    if (Math.sign(rawSteer) === Math.sign(car.yawRate || 0) && Math.abs(car.yawRate || 0) > 0.4) rawSteer *= 0.4;
+    rawSteer = clamp(rawSteer, -1, 1);
+  } else {
+    rawSteer = clamp(diff * 2.6 - (car.yawRate || 0) * 0.2, -1, 1);
+  }
+  car.aiSteer = damp(car.aiSteer || 0, rawSteer, ridge ? 9 : 12, dt || 1 / 60);
+
   let target = kappa > 0.00045 ? clamp(Math.sqrt(4.3 / kappa), 18, 38) : 38;
   if (ridge) {
-    const near = circuit.atDistance(car.distance + 8 + speed * 0.28);
-    const curvature = Math.max(Math.abs(aim.curvature || 0), Math.abs(near.curvature || 0));
-    let stageTarget = 48;
-    if (curvature > 0.12) stageTarget = 16;
-    else if (curvature > 0.06) stageTarget = 22;
-    else if (curvature > 0.03) stageTarget = 29;
-    else if (curvature > 0.014) stageTarget = 38;
-    target = Math.min(target, stageTarget);
-    if (Math.abs(sample.lateral) > 4.4) target = Math.min(target, 21);
+    const mu = 0.4;
+    const hold = kappa > 0.012 ? Math.sqrt((mu * 9.81) / kappa) : 34;
+    const floor = kappa > 0.09 ? 5.2 : 6.4;
+    target = clamp(hold * 0.78, floor, 32);
+    const latAbs = Math.abs(sample.lateral);
+    if (latAbs > 2.6) target = Math.min(target, 15);
+    if (latAbs > 4.2) target = Math.min(target, 9);
+    target = Math.max(target, crestCarry(circuit, car.distance, kappa));
   }
   if ((aim.tangent?.y || 0) > 0.05) target -= 2;
-  if (Math.abs(sample.lateral) > 5.2) target = Math.min(target, 16);
-  if (blocked) target = Math.min(target, 20);
+  if (Math.abs(sample.lateral) > (ridge ? 6.4 : 5.2)) target = Math.min(target, ridge ? 8 : 16);
+  if (blocked) target = Math.min(target, ridge ? 14 : 20);
 
   let throttle = 0.92 * car.skill;
   let brake = 0;
-  if (speed > target + 0.4) {
+  if (speed > target + (ridge ? 0.25 : 0.4)) {
     throttle = 0;
-    brake = clamp((speed - target) / 4.2, 0.3, 1);
+    brake = clamp((speed - target) / (ridge ? 3.1 : 4.2), ridge ? 0.45 : 0.3, 1);
+  } else if (ridge && speed < target - 1.5) {
+    throttle = Math.min(1, 0.72 * car.skill + 0.28);
   }
   return { throttle, brake, steer: car.aiSteer, handbrake: 0 };
 }
 
-function pathCurvature(circuit, distance) {
-  const span = 18;
+// Keep enough speed to leave a crest, then let the landing corner pull the target back down.
+function crestCarry(circuit, distance, upcomingKappa) {
+  if (!circuit.jumps?.length || upcomingKappa > 0.055) return 0;
+  const length = circuit.length;
+  let carry = 0;
+  for (const jump of circuit.jumps) {
+    let along = (distance - jump.distance + length) % length;
+    if (along > length * 0.5) along -= length;
+    if (along > -34 && along < 6) carry = Math.max(carry, jump.minSpeed + 1.2);
+  }
+  return carry;
+}
+
+function pathCurvature(circuit, distance, span = 18) {
   const a = circuit.atDistance(distance);
   const b = circuit.atDistance(distance + span);
   const headingA = Math.atan2(a.tangent.x, a.tangent.z);

@@ -9,7 +9,15 @@ import { createTrack } from './track.js';
 import { createCar, syncCar } from './car.js';
 import { createRace, raceStandings } from './race.js';
 import { createComposer } from './post.js';
-import { createAudio } from './audio.js';
+import { createAudio, loadAudioFiles, surfaceKind } from './audio.js';
+import {
+  CONTROL_IDS,
+  clampCenter,
+  clearLayout,
+  readLayout,
+  separateControls,
+  writeLayout,
+} from './control-layout.js';
 import {
   displayedCountdown,
   formatTime,
@@ -67,6 +75,16 @@ const hud = {
   carPrev: document.querySelector('#car-prev'),
   carNext: document.querySelector('#car-next'),
   again: document.querySelector('#again'),
+  mute: document.querySelector('#mute'),
+  openSettings: document.querySelector('#open-settings'),
+  pauseSettings: document.querySelector('#pause-settings'),
+  settings: document.querySelector('#settings'),
+  arrangeControls: document.querySelector('#arrange-controls'),
+  resetLayout: document.querySelector('#reset-layout'),
+  closeSettings: document.querySelector('#close-settings'),
+  arrangeBar: document.querySelector('#arrange-bar'),
+  arrangeDone: document.querySelector('#arrange-done'),
+  arrangeReset: document.querySelector('#arrange-reset'),
 };
 
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
@@ -102,6 +120,11 @@ let cameraMode = 'title';
 let paused = false;
 let seenCompleted = 0;
 let audioOn = false;
+let audioReady = null;
+let arranging = false;
+let drag = null;
+let muted = false;
+try { muted = localStorage.getItem('rqcccing.muted') === '1'; } catch { muted = false; }
 let beepState = -1;
 const smoke = createSmoke(scene);
 const minimap = setupMinimap(circuit);
@@ -129,7 +152,17 @@ hud.restart.addEventListener('click', () => begin(true));
 hud.backMenu.addEventListener('click', returnToMenu);
 hud.resultsMenu.addEventListener('click', returnToMenu);
 hud.cameraToggle.addEventListener('click', cycleCamera);
+hud.mute.addEventListener('click', () => setMuted(!muted));
+hud.openSettings.addEventListener('click', openSettings);
+hud.pauseSettings.addEventListener('click', openSettings);
+hud.arrangeControls.addEventListener('click', startArrange);
+hud.resetLayout.addEventListener('click', () => resetControlLayout());
+hud.closeSettings.addEventListener('click', closeSettings);
+hud.arrangeDone.addEventListener('click', finishArrange);
+hud.arrangeReset.addEventListener('click', () => resetControlLayout());
 setCameraLabel();
+setMuted(muted);
+applySavedLayout();
 window.addEventListener('resize', resize);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'hidden') return;
@@ -201,11 +234,8 @@ function step(dt) {
   }
 }
 
-function begin(resetRace = false) {
-  if (!audioOn) {
-    audio = createAudio();
-    audioOn = true;
-  }
+async function begin(resetRace = false) {
+  await ensureAudio();
   audio.resume();
   if (resetRace || race.phase === 'title' || race.phase === 'finish') {
     resetCars();
@@ -277,8 +307,10 @@ function setPaused(nextPaused) {
   hud.pause.classList.toggle('hidden', !paused);
   document.body.classList.toggle('paused', paused);
   hud.pauseToggle.setAttribute('aria-label', paused ? 'Race paused' : 'Pause race');
-  if (paused) audio?.update(0, 0, race.cars[0].gear || 1, 0);
-  else audio?.resume();
+  if (paused) {
+    silenceAudio();
+    audio?.suspend();
+  } else audio?.resume();
 }
 
 function clearDriveInput() {
@@ -297,7 +329,7 @@ function returnToMenu() {
   paused = false;
   beepState = -1;
   clearDriveInput();
-  audio?.update(0, 0, 1, 0);
+  silenceAudio();
   document.body.classList.remove('driving', 'paused');
   hud.title.classList.remove('hidden');
   hud.hud.classList.add('hidden');
@@ -454,7 +486,16 @@ function updateHud() {
   }
   if (race.phase === 'finish') showResults(order);
   const heard = readInput();
-  audio?.update(Math.max(player.speed, 0), heard.throttle, player.gear || 1, player.slip || 0);
+  const sample = circuit.query(player.x, player.z);
+  audio?.update({
+    speed: Math.max(player.speed, 0),
+    throttle: heard.throttle,
+    gear: player.gear || 1,
+    slip: player.slip || 0,
+    handbrake: heard.handbrake,
+    surface: surfaceKind(circuit.stageId, sample.lateral),
+    airborne: !!player.airborne,
+  });
   drawMinimap(order);
 }
 
@@ -526,7 +567,11 @@ function bindInput() {
     if (event.key === ' ') event.preventDefault();
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key) && race.phase !== 'title') event.preventDefault();
     if (event.key.toLowerCase() === 'c' && !event.repeat && !paused && (race.phase === 'race' || race.phase === 'countdown')) cycleCamera();
-    if ((event.key.toLowerCase() === 'p' || event.key === 'Escape') && !event.repeat) setPaused(!paused);
+    if ((event.key.toLowerCase() === 'p' || event.key === 'Escape') && !event.repeat) {
+      if (arranging) finishArrange();
+      else setPaused(!paused);
+    }
+    if (event.key.toLowerCase() === 'm' && !event.repeat) setMuted(!muted);
     if (event.key.toLowerCase() === 'r' && race.phase === 'race') {
       const player = race.cars[0];
       const sample = circuit.atDistance(player.distance);
@@ -552,12 +597,14 @@ function bindInput() {
   bindHold('brake', 'brake');
   bindHold('handbrake', 'handbrake');
   bindWheel();
+  bindLayout();
   lockPageZoom();
 }
 
 function bindHold(id, field) {
   const el = document.getElementById(id);
   const on = (event) => {
+    if (arranging) return;
     touch[field] = true;
     try { el.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ }
     event.preventDefault();
@@ -583,6 +630,7 @@ function bindWheel() {
     return Math.atan2(x, -y);
   };
   wheel.addEventListener('pointerdown', (event) => {
+    if (arranging) return;
     wheelState.held = true;
     wheelState.pointerId = event.pointerId;
     wheelState.lastAngle = angleOf(event);
@@ -627,6 +675,162 @@ function applyWheel(rotor) {
   wheel.setAttribute('aria-valuetext', touch.steer > 0.08 ? 'Right' : touch.steer < -0.08 ? 'Left' : 'Centered');
 }
 
+function ensureAudio() {
+  if (!audioReady) {
+    audioReady = loadAudioFiles().then(async (encoded) => {
+      try {
+        audio = await createAudio(encoded);
+      } catch (error) {
+        console.error(error);
+        audio = { resume() {}, suspend() {}, setMuted() {}, update() {}, tone() {} };
+      }
+      if (muted) audio.setMuted(true);
+      audioOn = true;
+    });
+  }
+  return audioReady;
+}
+
+function silenceAudio() {
+  audio?.update({
+    speed: 0, throttle: 0, gear: 1, slip: 0, handbrake: 0, surface: 'asphalt', airborne: false,
+  });
+}
+
+function setMuted(next) {
+  muted = next;
+  try { localStorage.setItem('rqcccing.muted', muted ? '1' : '0'); } catch { /* private mode */ }
+  audio?.setMuted(muted);
+  if (hud.mute) {
+    hud.mute.textContent = muted ? 'SOUND OFF' : 'SOUND';
+    hud.mute.setAttribute('aria-label', muted ? 'Unmute sound' : 'Mute sound');
+  }
+}
+
+function openSettings() {
+  hud.settings.classList.remove('hidden');
+}
+
+function closeSettings() {
+  hud.settings.classList.add('hidden');
+}
+
+function startArrange() {
+  arranging = true;
+  clearDriveInput();
+  document.body.classList.add('arranging');
+  hud.settings.classList.add('hidden');
+  hud.pause.classList.add('hidden');
+  hud.arrangeBar.classList.remove('hidden');
+}
+
+function finishArrange() {
+  arranging = false;
+  drag = null;
+  document.body.classList.remove('arranging');
+  hud.arrangeBar.classList.add('hidden');
+  if (paused) hud.pause.classList.remove('hidden');
+}
+
+function bindLayout() {
+  for (const id of CONTROL_IDS) {
+    const el = document.getElementById(id);
+    el.addEventListener('pointerdown', (event) => {
+      if (!arranging) return;
+      const rect = el.getBoundingClientRect();
+      drag = {
+        id,
+        el,
+        pointerId: event.pointerId,
+        offsetX: event.clientX - (rect.left + rect.width / 2),
+        offsetY: event.clientY - (rect.top + rect.height / 2),
+      };
+      try { el.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ }
+      event.preventDefault();
+    });
+  }
+  window.addEventListener('pointermove', (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const size = { w: drag.el.offsetWidth, h: drag.el.offsetHeight };
+    const fitted = clampCenter(
+      event.clientX - drag.offsetX,
+      event.clientY - drag.offsetY,
+      size.w,
+      size.h,
+      window.innerWidth,
+      window.innerHeight,
+    );
+    placeControl(drag.el, fitted.x, fitted.y);
+  });
+  window.addEventListener('pointerup', (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    settleDragged(drag.id);
+    drag = null;
+  });
+}
+
+function settleDragged(movedId) {
+  const centers = {};
+  const sizes = {};
+  for (const id of CONTROL_IDS) {
+    const el = document.getElementById(id);
+    const rect = el.getBoundingClientRect();
+    centers[id] = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    sizes[id] = { w: rect.width, h: rect.height };
+  }
+  const moved = separateControls(movedId, centers, sizes, {
+    w: window.innerWidth,
+    h: window.innerHeight,
+  });
+  placeControl(document.getElementById(movedId), moved.x, moved.y);
+  saveCurrentLayout();
+}
+
+function placeControl(el, x, y) {
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+  el.style.right = 'auto';
+  el.style.bottom = 'auto';
+  el.style.transform = 'translate(-50%, -50%)';
+}
+
+function saveCurrentLayout() {
+  const layout = {};
+  for (const id of CONTROL_IDS) {
+    const rect = document.getElementById(id).getBoundingClientRect();
+    layout[id] = {
+      x: (rect.left + rect.width / 2) / window.innerWidth,
+      y: (rect.top + rect.height / 2) / window.innerHeight,
+    };
+  }
+  try { writeLayout(localStorage, layout); } catch { /* private mode */ }
+  document.body.classList.add('has-custom-layout');
+}
+
+function applySavedLayout() {
+  let layout = null;
+  try { layout = readLayout(localStorage); } catch { layout = null; }
+  if (!layout) return;
+  document.body.classList.add('has-custom-layout');
+  for (const id of CONTROL_IDS) {
+    const el = document.getElementById(id);
+    placeControl(el, layout[id].x * window.innerWidth, layout[id].y * window.innerHeight);
+  }
+}
+
+function resetControlLayout() {
+  try { clearLayout(localStorage); } catch { /* private mode */ }
+  document.body.classList.remove('has-custom-layout');
+  for (const id of CONTROL_IDS) {
+    const el = document.getElementById(id);
+    el.style.left = '';
+    el.style.top = '';
+    el.style.right = '';
+    el.style.bottom = '';
+    el.style.transform = '';
+  }
+}
+
 function lockPageZoom() {
   const block = (event) => event.preventDefault();
   document.addEventListener('gesturestart', block, { passive: false });
@@ -642,6 +846,7 @@ function lockPageZoom() {
 }
 
 function resize() {
+  applySavedLayout();
   const width = window.innerWidth;
   const height = window.innerHeight;
   camera.aspect = width / height;

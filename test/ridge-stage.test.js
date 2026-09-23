@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import * as THREE from 'three';
 import { crestLift, createCircuit } from '../src/circuit.js';
 import { createVehicle, placeVehicle, updateVehicle } from '../src/vehicle.js';
+import { createRace } from '../src/race.js';
 import { clamp, wrapPi } from '../src/util.js';
 
 test('Ridgebreak Rally has a high-country route with two ordered jump triggers', () => {
@@ -126,4 +127,30 @@ test('each crest launches from the lip and lands inside the ridge wall', () => {
     assert.ok(clearance > 0.3, `${jump.id} clearance was ${clearance.toFixed(2)}m`);
     assert.ok(worst < 13, `${jump.id} left the wall at ${worst.toFixed(2)}m`);
   }
+});
+
+test('the ridge field stays off the wall and can reach both crests', () => {
+  const circuit = createCircuit(420, 'ridge');
+  const race = createRace(circuit);
+  race.phase = 'race';
+  const start = race.cars[0].distance;
+  const progress = race.cars.map(() => 0);
+  let worst = 0;
+  const dt = 1 / 60;
+  for (let frame = 0; frame < 150 * 60; frame += 1) {
+    const before = race.cars.map((car) => car.distance);
+    race.update(dt, null);
+    race.cars.forEach((car, index) => {
+      let delta = car.distance - before[index];
+      if (delta < -circuit.length * 0.5) delta += circuit.length;
+      if (delta > 0 && delta < 80) progress[index] += delta;
+      worst = Math.max(worst, Math.abs(circuit.query(car.x, car.z).lateral));
+    });
+  }
+  const lead = Math.max(...progress);
+  for (const jump of circuit.jumps) {
+    const need = (jump.distance - start + circuit.length) % circuit.length;
+    assert.ok(lead > need + 30, `${jump.id} lead ${lead.toFixed(0)} need ${need.toFixed(0)}`);
+  }
+  assert.ok(worst < 12, `furthest excursion was ${worst.toFixed(2)}m`);
 });
