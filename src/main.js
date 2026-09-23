@@ -10,6 +10,14 @@ import { createCar, syncCar } from './car.js';
 import { createRace, raceStandings } from './race.js';
 import { createComposer } from './post.js';
 import { createAudio } from './audio.js';
+import {
+  displayedCountdown,
+  formatTime,
+  gearLabel,
+  readBestLap,
+  stageDistanceText,
+  writeBestLap,
+} from './readout.js';
 
 const RALLY_CARS = [
   'Subaru Impreza',
@@ -40,6 +48,7 @@ const hud = {
   resultBody: document.querySelector('#result-body'),
   finishPlace: document.querySelector('#finish-place'),
   finishTime: document.querySelector('#finish-time'),
+  finishBest: document.querySelector('#finish-best'),
   pause: document.querySelector('#pause'),
   pauseToggle: document.querySelector('#pause-toggle'),
   resume: document.querySelector('#resume'),
@@ -86,10 +95,12 @@ const rallyModelsByName = new Map();
 let carNamesByDriver = [];
 
 const keys = new Set();
-const touch = { steer: 0, gas: false, brake: false };
+const touch = { steer: 0, gas: false, brake: false, handbrake: false };
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const wheelState = { rotation: 0, held: false, lastAngle: 0 };
 let cameraMode = 'title';
 let paused = false;
+let seenCompleted = 0;
 let audioOn = false;
 let beepState = -1;
 const smoke = createSmoke(scene);
@@ -106,7 +117,7 @@ bindInput();
 hud.start.disabled = true;
 hud.startLabel.textContent = 'Loading car and stage';
 hud.start.setAttribute('aria-busy', 'true');
-hud.stageDistance.textContent = `${(circuit.length / 1000).toFixed(2)} KM`;
+renderStageDistance();
 updateCarSelection();
 hud.start.addEventListener('click', () => begin());
 hud.again.addEventListener('click', () => begin(true));
@@ -120,6 +131,11 @@ hud.resultsMenu.addEventListener('click', returnToMenu);
 hud.cameraToggle.addEventListener('click', cycleCamera);
 setCameraLabel();
 window.addEventListener('resize', resize);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden') return;
+  setPaused(true);
+  audio?.suspend();
+});
 
 const clock = new THREE.Clock();
 loadGameAssets(renderer).then((assets) => {
@@ -147,7 +163,8 @@ loadGameAssets(renderer).then((assets) => {
     track.update(dt);
     const player = race.cars[0];
     lighting.updateShadows(models[0].root.position, quality.shadowMap);
-    post.grade.uniforms.aberration.value = cameraMode === 'title' ? 0 : Math.min(0.0035, player.speed * 0.00003);
+    const chaseAberration = Math.min(0.0035, player.speed * 0.00003);
+    post.grade.uniforms.aberration.value = reducedMotion.matches || cameraMode === 'title' ? 0 : chaseAberration;
     applyShot();
     post.composer.render();
   });
@@ -165,6 +182,7 @@ function step(dt) {
   } else {
     const drive = params.get('bot') === '1' ? null : input;
     race.update(dt, drive);
+    rememberCompletedLap();
     updateCountdownAudio();
     race.cars.forEach((car, index) => {
       const sample = circuit.query(car.x, car.z);
@@ -186,23 +204,12 @@ function step(dt) {
 function begin(resetRace = false) {
   if (!audioOn) {
     audio = createAudio();
-    audio.resume();
     audioOn = true;
   }
-  if (resetRace) {
-    const fresh = createRace(circuit);
-    race.cars.forEach((car, index) => Object.assign(car, fresh.cars[index]));
+  audio.resume();
+  if (resetRace || race.phase === 'title' || race.phase === 'finish') {
+    resetCars();
     race.phase = 'countdown';
-    race.countdown = 3.4;
-    race.elapsed = 0;
-    race.finishedOrder = [];
-  } else if (race.phase === 'title' || race.phase === 'finish') {
-    const fresh = createRace(circuit);
-    race.cars.forEach((car, index) => Object.assign(car, fresh.cars[index]));
-    race.phase = 'countdown';
-    race.countdown = 3.4;
-    race.elapsed = 0;
-    race.finishedOrder = [];
   }
   beepState = -1;
   paused = false;
@@ -271,6 +278,7 @@ function setPaused(nextPaused) {
   document.body.classList.toggle('paused', paused);
   hud.pauseToggle.setAttribute('aria-label', paused ? 'Race paused' : 'Pause race');
   if (paused) audio?.update(0, 0, race.cars[0].gear || 1, 0);
+  else audio?.resume();
 }
 
 function clearDriveInput() {
@@ -278,16 +286,14 @@ function clearDriveInput() {
   touch.steer = 0;
   touch.gas = false;
   touch.brake = false;
+  touch.handbrake = false;
   wheelState.held = false;
 }
 
 function returnToMenu() {
-  const fresh = createRace(circuit);
-  race.cars.forEach((car, index) => Object.assign(car, fresh.cars[index]));
+  resetCars();
   race.phase = 'title';
-  race.countdown = 3.4;
-  race.elapsed = 0;
-  race.finishedOrder = [];
+  renderStageDistance();
   paused = false;
   beepState = -1;
   clearDriveInput();
@@ -330,7 +336,7 @@ function readInput() {
     throttle: pressed('arrowup', 'w') || touch.gas ? 1 : 0,
     brake: pressed('arrowdown', 's') || touch.brake ? 1 : 0,
     steer,
-    handbrake: keys.has(' ') ? 1 : 0,
+    handbrake: keys.has(' ') || touch.handbrake ? 1 : 0,
   };
 }
 
@@ -339,7 +345,7 @@ function pressed(...names) {
 }
 
 function updateTitleCamera(dt) {
-  titleAngle += dt * 0.12;
+  if (!reducedMotion.matches) titleAngle += dt * 0.12;
   const origin = circuit.atDistance(circuit.length - 24);
   const radius = 16 + Math.sin(titleAngle * 0.7) * 2;
   desiredPos.copy(origin.point)
@@ -428,7 +434,7 @@ function updateHud() {
   hud.speed.textContent = String(Math.round(kmh));
   hud.speedFill.style.width = `${Math.min(kmh / 280, 1) * 100}%`;
   hud.speedMeter.setAttribute('aria-valuenow', String(Math.min(280, Math.round(kmh))));
-  hud.gear.textContent = Math.abs(player.speed) < 0.7 ? 'N' : String(player.gear || 1);
+  hud.gear.textContent = gearLabel(player.speed, player.vLong, player.gear);
   hud.lapCurrent.textContent = String(Math.min(player.completed + 1, 3));
   const order = raceStandings(race);
   const place = order.findIndex((entry) => entry.index === 0) + 1;
@@ -438,8 +444,7 @@ function updateHud() {
   hud.warning.classList.toggle('hidden', player.wrongWay < 0.35 || race.phase !== 'race');
   hud.pauseToggle.classList.toggle('hidden', race.phase === 'finish');
   if (race.phase === 'countdown') {
-    const n = Math.ceil(race.countdown);
-    hud.countdown.textContent = n > 0 ? String(n) : '';
+    hud.countdown.textContent = displayedCountdown(race.countdown);
     hud.countdown.classList.remove('hidden');
   } else if (race.phase === 'race' && race.elapsed < 1.1) {
     hud.countdown.textContent = 'GO';
@@ -460,6 +465,7 @@ function showResults(order) {
   const playerPlace = order.findIndex((entry) => entry.index === 0) + 1;
   hud.finishPlace.textContent = ordinal(playerPlace).toUpperCase();
   hud.finishTime.textContent = formatTime(race.cars[0].finishTime);
+  hud.finishBest.textContent = formatTime(readBestLap(localStorage, circuit.stageId));
   order.forEach((entry, index) => {
     const row = document.createElement('div');
     row.className = `result-row${entry.index === 0 ? ' is-player' : ''}`;
@@ -479,11 +485,30 @@ function showResults(order) {
   });
 }
 
-function formatTime(value) {
-  if (value == null || !Number.isFinite(value)) return '--:--.---';
-  const minutes = Math.floor(value / 60);
-  const seconds = value - minutes * 60;
-  return `${minutes}:${seconds.toFixed(3).padStart(6, '0')}`;
+function resetCars() {
+  const fresh = createRace(circuit);
+  race.cars.forEach((car, index) => Object.assign(car, fresh.cars[index]));
+  race.countdown = 3.4;
+  race.elapsed = 0;
+  race.finishedOrder = [];
+  seenCompleted = 0;
+  const best = readBestLap(localStorage, circuit.stageId);
+  if (best != null) race.cars[0].bestLap = best;
+}
+
+function rememberCompletedLap() {
+  const player = race.cars[0];
+  if (player.completed === seenCompleted) return;
+  seenCompleted = player.completed;
+  const best = writeBestLap(localStorage, circuit.stageId, player.lastLap);
+  if (best != null) player.bestLap = best;
+}
+
+function renderStageDistance() {
+  hud.stageDistance.textContent = stageDistanceText(
+    circuit.length,
+    readBestLap(localStorage, circuit.stageId),
+  );
 }
 
 function ordinal(n) {
@@ -525,6 +550,7 @@ function bindInput() {
   window.addEventListener('keyup', (event) => keys.delete(event.key.toLowerCase()));
   bindHold('gas', 'gas');
   bindHold('brake', 'brake');
+  bindHold('handbrake', 'handbrake');
   bindWheel();
   lockPageZoom();
 }

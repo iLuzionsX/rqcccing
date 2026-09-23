@@ -54,6 +54,9 @@ export function createAudio() {
     resume() {
       return ctx.resume();
     },
+    suspend() {
+      return ctx.suspend();
+    },
     update(speed, throttle, gear = 1, slip = 0) {
       const now = ctx.currentTime;
       const kmh = Math.max(0, speed) * 3.6;
