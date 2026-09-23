@@ -26,6 +26,16 @@ import {
   stageDistanceText,
   writeBestLap,
 } from './readout.js';
+import {
+  createWheelState,
+  dragWheel,
+  grabWheel,
+  pointerSample,
+  releaseWheel,
+  resetWheel,
+  springWheel,
+  wheelSteer,
+} from './wheel.js';
 
 const RALLY_CARS = [
   'Subaru Impreza',
@@ -115,7 +125,7 @@ let carNamesByDriver = [];
 const keys = new Set();
 const touch = { steer: 0, gas: false, brake: false, handbrake: false };
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-const wheelState = { rotation: 0, held: false, lastAngle: 0 };
+const wheelState = createWheelState();
 let cameraMode = 'title';
 let paused = false;
 let seenCompleted = 0;
@@ -319,7 +329,7 @@ function clearDriveInput() {
   touch.gas = false;
   touch.brake = false;
   touch.handbrake = false;
-  wheelState.held = false;
+  resetWheel(wheelState);
 }
 
 function returnToMenu() {
@@ -618,57 +628,39 @@ function bindHold(id, field) {
   el.addEventListener('pointercancel', off);
 }
 
-const WHEEL_LOCK = 1.15;
-
 function bindWheel() {
   const wheel = document.getElementById('wheel');
   const rotor = document.getElementById('wheel-rotor');
-  const angleOf = (event) => {
-    const rect = wheel.getBoundingClientRect();
-    const x = event.clientX - (rect.left + rect.width / 2);
-    const y = event.clientY - (rect.top + rect.height / 2);
-    return Math.atan2(x, -y);
-  };
+  const sample = (event) => pointerSample(event.clientX, event.clientY, wheel.getBoundingClientRect());
   wheel.addEventListener('pointerdown', (event) => {
     if (arranging) return;
-    wheelState.held = true;
     wheelState.pointerId = event.pointerId;
-    wheelState.lastAngle = angleOf(event);
+    grabWheel(wheelState, sample(event));
     try { wheel.setPointerCapture(event.pointerId); } catch { /* pointer already gone */ }
     event.preventDefault();
   });
   wheel.addEventListener('pointermove', (event) => {
     if (!wheelState.held || event.pointerId !== wheelState.pointerId) return;
-    const next = angleOf(event);
-    let delta = next - wheelState.lastAngle;
-    if (delta > Math.PI) delta -= Math.PI * 2;
-    if (delta < -Math.PI) delta += Math.PI * 2;
-    wheelState.lastAngle = next;
-    wheelState.rotation = clamp(wheelState.rotation + delta, -WHEEL_LOCK, WHEEL_LOCK);
+    dragWheel(wheelState, sample(event));
     applyWheel(rotor);
   });
   const release = (event) => {
     if (event.pointerId !== wheelState.pointerId) return;
     if (wheel.hasPointerCapture(event.pointerId)) wheel.releasePointerCapture(event.pointerId);
-    wheelState.held = false;
-    wheelState.pointerId = null;
+    releaseWheel(wheelState);
   };
   wheel.addEventListener('pointerup', release);
   wheel.addEventListener('pointercancel', release);
 }
 
 function updateWheel(dt) {
-  if (!wheelState.held) {
-    wheelState.rotation += (0 - wheelState.rotation) * (1 - Math.exp(-8 * dt));
-    if (Math.abs(wheelState.rotation) < 0.008) wheelState.rotation = 0;
-  }
-  touch.steer = wheelState.rotation / WHEEL_LOCK;
+  if (!wheelState.held) wheelState.rotation = springWheel(wheelState.rotation, dt);
   const rotor = document.getElementById('wheel-rotor');
   if (rotor) applyWheel(rotor);
 }
 
 function applyWheel(rotor) {
-  touch.steer = wheelState.rotation / WHEEL_LOCK;
+  touch.steer = wheelSteer(wheelState.rotation);
   rotor.style.transform = `rotate(${wheelState.rotation}rad)`;
   const wheel = document.getElementById('wheel');
   wheel.setAttribute('aria-valuenow', touch.steer.toFixed(2));
